@@ -143,7 +143,7 @@
   },
   {
     "model": "checklist.procedure",
-    "pk": 10, 
+    "pk": 10,
     "fields": {
       "title": "CDU Preflight Procedure",
       "step": 6,
@@ -377,9 +377,9 @@
     "pk": 7,
     "fields": {
       "title": "Anti-Ice Normal",
-      "label": "Anti-Ice (≤0°C)",
+      "label": "Anti-Ice (\u00e2\u2030\u00a40\u00c2\u00b0C)",
       "order": 8,
-      "description": "Temperature at or below 0°C — icing procedures apply",
+      "description": "Temperature at or below 0\u00c2\u00b0C \u00e2\u20ac\u201d icing procedures apply",
       "show": true,
       "is_user_preference": false,
       "over_ruled_by": null,
@@ -399,7 +399,7 @@
         ]
       },
       "live_rule_mode": "prompt_on_change",
-      "prompt_message": "OAT below 0 °C — Anti-Ice Normal procedures active?"
+      "prompt_message": "OAT below 0 \u00c2\u00b0C \u00e2\u20ac\u201d Anti-Ice Normal procedures active?"
     }
   },
   {
@@ -424,9 +424,9 @@
     "pk": 9,
     "fields": {
       "title": "ZeroToTen",
-      "label": "0°C – 10°C Conditions",
+      "label": "0\u00c2\u00b0C \u00e2\u20ac\u201c 10\u00c2\u00b0C Conditions",
       "order": 22,
-      "description": "Temperature between 0°C and 10°C — additional checks required",
+      "description": "Temperature between 0\u00c2\u00b0C and 10\u00c2\u00b0C \u00e2\u20ac\u201d additional checks required",
       "show": true,
       "is_user_preference": false,
       "over_ruled_by": null,
@@ -451,7 +451,7 @@
         ]
       },
       "live_rule_mode": "prompt_on_change",
-      "prompt_message": "OAT 0–10 °C — Zero-to-Ten temperature procedures active?"
+      "prompt_message": "OAT 0\u00e2\u20ac\u201c10 \u00c2\u00b0C \u00e2\u20ac\u201d Zero-to-Ten temperature procedures active?"
     }
   },
   {
@@ -478,7 +478,7 @@
       "title": "No Pushback",
       "label": "No Pushback",
       "order": 20,
-      "description": "No pushback required — engine start at stand",
+      "description": "No pushback required \u00e2\u20ac\u201d engine start at stand",
       "show": true,
       "is_user_preference": false,
       "over_ruled_by": null,
@@ -1870,7 +1870,7 @@
     "fields": {
       "item": "IAS / MACH Selector",
       "procedure": 2,
-      "step": 52,
+      "step": 55,
       "setting": "V2",
       "action_label": "SET",
       "dataref_expression": "(sim/cockpit/autopilot/airspeed:>={laminar/B738/FMS/v2})",
@@ -1889,7 +1889,7 @@
     "fields": {
       "item": "Heading",
       "procedure": 2,
-      "step": 53,
+      "step": 56,
       "setting": "set to RWY Heading",
       "action_label": "SET",
       "dataref_expression": "",
@@ -1909,7 +1909,7 @@
     "fields": {
       "item": "Altitude",
       "procedure": 2,
-      "step": 54,
+      "step": 57,
       "setting": "set initial (cleared) Altitude",
       "action_label": "SET",
       "dataref_expression": "",
@@ -1928,7 +1928,7 @@
     "fields": {
       "item": "VNAV",
       "procedure": 2,
-      "step": 55,
+      "step": 58,
       "setting": "Arm",
       "action_label": "ARMED",
       "dataref_expression": "(laminar/B738/autopilot/vnav_status1:1)",
@@ -1949,7 +1949,7 @@
     "fields": {
       "item": "LNAV",
       "procedure": 2,
-      "step": 56,
+      "step": 59,
       "setting": "Arm (or HDG )",
       "action_label": "ARMED",
       "dataref_expression": "(laminar/B738/autopilot/lnav_status:1)||(laminar/B738/autopilot/hdg_sel_status:1)",
@@ -1977,7 +1977,7 @@
     "fields": {
       "item": "Baro Units of Measure",
       "procedure": 2,
-      "step": 57,
+      "step": 60,
       "setting": "set IN/HPA as required",
       "action_label": "SET",
       "dataref_expression": "",
@@ -1994,7 +1994,7 @@
     "fields": {
       "item": "Set Map Display / CTR",
       "procedure": 2,
-      "step": 58,
+      "step": 61,
       "setting": "MAP",
       "action_label": "SET",
       "dataref_expression": "",
@@ -2011,7 +2011,7 @@
     "fields": {
       "item": "Set Range",
       "procedure": 2,
-      "step": 59,
+      "step": 62,
       "setting": "As Requiered",
       "action_label": "SET",
       "dataref_expression": "",
@@ -2028,7 +2028,7 @@
     "fields": {
       "item": "Set Display Data",
       "procedure": 2,
-      "step": 60,
+      "step": 63,
       "setting": "STA / WPT / ARPT / DATA / POS",
       "action_label": "SET",
       "dataref_expression": "",
@@ -2045,7 +2045,7 @@
     "fields": {
       "item": "PFD - Set Altimeter / QNH",
       "procedure": 2,
-      "step": 61,
+      "step": 64,
       "setting": "Based on METAR",
       "action_label": "SET",
       "dataref_expression": "",
@@ -2062,7 +2062,7 @@
     "fields": {
       "item": "Standby Altimeter",
       "procedure": 2,
-      "step": 62,
+      "step": 65,
       "setting": "As Required",
       "action_label": "SET",
       "dataref_expression": "",
@@ -3298,7 +3298,7 @@
       "item": "Engine Start Switches 1 & 2",
       "procedure": 6,
       "step": 205,
-      "setting": "AUTO (or CONT if < 10°C + visible moisture)",
+      "setting": "AUTO (or CONT if < 10\u00c2\u00b0C + visible moisture)",
       "action_label": "SET",
       "dataref_expression": "",
       "role": "PM",
@@ -3749,7 +3749,7 @@
       "dataref_expression": "sim/cockpit2/controls/speedbrake_ratio:0",
       "role": "C",
       "auto_check_rule": {
-        "dataref": "laminar/B738/flt_ctrls/speedbrake_lever_pos",
+        "dataref": "sim/cockpit2/controls/speedbrake_ratio",
         "op": "eq",
         "value": 0
       },
@@ -4738,7 +4738,9 @@
       "dataref_expression": "",
       "role": "PF",
       "auto_check_rule": null,
-      "attributes": [17]
+      "attributes": [
+        17
+      ]
     }
   },
   {
@@ -4877,7 +4879,9 @@
         "op": "eq",
         "value": 2
       },
-      "attributes": [4]
+      "attributes": [
+        4
+      ]
     }
   },
   {
@@ -5042,7 +5046,9 @@
         "fmc_line": "laminar/B738/fmc1/Line06_L",
         "contains": "STEP"
       },
-      "attributes": [4]
+      "attributes": [
+        4
+      ]
     }
   },
   {
@@ -7496,7 +7502,9 @@
           }
         ]
       },
-      "attributes": [4]
+      "attributes": [
+        4
+      ]
     }
   },
   {
@@ -7623,7 +7631,9 @@
         "op": "eq",
         "value": 1
       },
-      "attributes": [4]
+      "attributes": [
+        4
+      ]
     }
   },
   {
@@ -7768,7 +7778,9 @@
       "dataref_expression": "",
       "role": "PF",
       "auto_check_rule": null,
-      "attributes": [4]
+      "attributes": [
+        4
+      ]
     }
   },
   {
@@ -7824,7 +7836,9 @@
           }
         ]
       },
-      "attributes": [4]
+      "attributes": [
+        4
+      ]
     }
   },
   {
@@ -9027,7 +9041,9 @@
       "dataref_expression": "",
       "role": "PM",
       "auto_check_rule": null,
-      "attributes": [4]
+      "attributes": [
+        4
+      ]
     }
   },
   {
@@ -9057,7 +9073,146 @@
       "dataref_expression": "",
       "role": "PF",
       "auto_check_rule": null,
-      "attributes": [4]
+      "attributes": [
+        4
+      ]
+    }
+  },
+  {
+    "model": "checklist.checkitem",
+    "pk": 389,
+    "fields": {
+      "item": "AUTOPILOT DISENGAGE BAR",
+      "procedure": 2,
+      "step": 52,
+      "setting": "UP",
+      "action_label": "CHECKED",
+      "dataref_expression": "laminar/B738/autopilot/disconnect_pos:0",
+      "role": "FO",
+      "auto_check_rule": {
+        "dataref": "laminar/B738/autopilot/disconnect_pos",
+        "op": "eq",
+        "value": 0
+      },
+      "attributes": [
+        3
+      ]
+    }
+  },
+  {
+    "model": "checklist.checkitem",
+    "pk": 390,
+    "fields": {
+      "item": "AUTOPILOTS",
+      "procedure": 2,
+      "step": 53,
+      "setting": "ALL OFF",
+      "action_label": "CHECKED",
+      "dataref_expression": "(laminar/B738/autopilot/vnav_status1:0)&&(laminar/B738/autopilot/lnav_status:0)&&(laminar/B738/autopilot/lnav_status2:0)&&(laminar/B738/autopilot/vorloc_status:0)&&(laminar/B738/autopilot/n1_status:0)&&(laminar/B738/autopilot/speed_status1:0)&&(laminar/B738/autopilot/lvl_chg_status:0)&&(laminar/B738/autopilot/hdg_sel_status:0)&&(laminar/B738/autopilot/app_status:0)&&(laminar/B738/autopilot/alt_hld_status:0)&&(laminar/B738/autopilot/vs_status:0)&&(laminar/B738/autopilot/cmd_a_status:0)&&(laminar/B738/autopilot/cmd_b_status:0)&&(laminar/B738/autopilot/cws_a_status:0)&&(laminar/B738/autopilot/cws_b_status:0)",
+      "role": "FO",
+      "auto_check_rule": {
+        "all": [
+          {
+            "dataref": "laminar/B738/autopilot/vnav_status1",
+            "op": "eq",
+            "value": 0
+          },
+          {
+            "dataref": "laminar/B738/autopilot/lnav_status",
+            "op": "eq",
+            "value": 0
+          },
+          {
+            "dataref": "laminar/B738/autopilot/lnav_status2",
+            "op": "eq",
+            "value": 0
+          },
+          {
+            "dataref": "laminar/B738/autopilot/vorloc_status",
+            "op": "eq",
+            "value": 0
+          },
+          {
+            "dataref": "laminar/B738/autopilot/n1_status",
+            "op": "eq",
+            "value": 0
+          },
+          {
+            "dataref": "laminar/B738/autopilot/speed_status1",
+            "op": "eq",
+            "value": 0
+          },
+          {
+            "dataref": "laminar/B738/autopilot/lvl_chg_status",
+            "op": "eq",
+            "value": 0
+          },
+          {
+            "dataref": "laminar/B738/autopilot/hdg_sel_status",
+            "op": "eq",
+            "value": 0
+          },
+          {
+            "dataref": "laminar/B738/autopilot/app_status",
+            "op": "eq",
+            "value": 0
+          },
+          {
+            "dataref": "laminar/B738/autopilot/alt_hld_status",
+            "op": "eq",
+            "value": 0
+          },
+          {
+            "dataref": "laminar/B738/autopilot/vs_status",
+            "op": "eq",
+            "value": 0
+          },
+          {
+            "dataref": "laminar/B738/autopilot/cmd_a_status",
+            "op": "eq",
+            "value": 0
+          },
+          {
+            "dataref": "laminar/B738/autopilot/cmd_b_status",
+            "op": "eq",
+            "value": 0
+          },
+          {
+            "dataref": "laminar/B738/autopilot/cws_a_status",
+            "op": "eq",
+            "value": 0
+          },
+          {
+            "dataref": "laminar/B738/autopilot/cws_b_status",
+            "op": "eq",
+            "value": 0
+          }
+        ]
+      },
+      "attributes": [
+        3
+      ]
+    }
+  },
+  {
+    "model": "checklist.checkitem",
+    "pk": 391,
+    "fields": {
+      "item": "BANK ANGLE BELOW FL300",
+      "procedure": 2,
+      "step": 54,
+      "setting": "25 DEGREES",
+      "action_label": "SET",
+      "dataref_expression": "laminar/B738/autopilot/bank_angle_pos:3",
+      "role": "FO",
+      "auto_check_rule": {
+        "dataref": "laminar/B738/autopilot/bank_angle_pos",
+        "op": "eq",
+        "value": 3
+      },
+      "attributes": [
+        3
+      ]
     }
   }
 ]
