@@ -676,9 +676,18 @@ def procedure_detail(request, slug=None, pk=None):
     elif 16 in active_attr_ids:
         active_attr_ids.remove(16)  # strip DualPilot if wrongly stored for SOLO session
 
-    allitems = procedure2view.checkitem_set.all()
-    query_ids = [item.id for item in allitems if item.shouldshow(active_attr_ids)]
-    filtered_check_items = procedure2view.checkitem_set.filter(id__in=query_ids)
+    allitems = procedure2view.checkitem_set.prefetch_related("attributes")
+
+    # Two buckets: normally visible items and warn-mode items (hidden by attr 3 only,
+    # but have an auto_check_rule that can fail and needs to gate the pilot).
+    shown_items = []
+    for item in allitems:
+        if item.shouldshow(active_attr_ids):
+            item.warn_mode = False
+            shown_items.append(item)
+        elif item.should_warn(active_attr_ids):
+            item.warn_mode = True
+            shown_items.append(item)
 
     # Roles still come from session (migrated to FlightSession in a later step)
     pilot_role = request.session.get("pilot_role", None)
@@ -686,7 +695,7 @@ def procedure_detail(request, slug=None, pk=None):
     dual_mode = request.session.get("dual_mode", False)
 
     check_items = []
-    for item in filtered_check_items:
+    for item in shown_items:
         item.lowlight = (
             dual_mode
             and item.role != "BOTH"

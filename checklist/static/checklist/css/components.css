@@ -2366,6 +2366,7 @@
 
 .debug-tag-gate  { background: rgba(255, 160, 50, 0.15); color: #ffa032; }
 .debug-tag-opt   { background: rgba(255, 255, 255, 0.06); color: var(--color-ink-dim); }
+.debug-tag-warn  { background: rgba(255, 80, 80, 0.15); color: #ff6060; }
 
 .debug-cond {
   display: grid;

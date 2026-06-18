@@ -363,7 +363,10 @@ def plugin_state(request):
                 .prefetch_related("attributes")
                 .order_by("step")
             )
-            visible_items = [i for i in all_items if i.shouldshow(active_attr_ids)]
+            visible_items = [
+                i for i in all_items
+                if i.shouldshow(active_attr_ids) or i.should_warn(active_attr_ids)
+            ]
 
             def is_optional(item):
                 return any(a.pk == _OPTIONAL_ATTR for a in item.attributes.all())

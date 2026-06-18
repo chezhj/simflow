@@ -11,6 +11,8 @@ from django.test import TestCase
 from django.urls import reverse
 
 from checklist.models import (
+    Attribute,
+    CheckItem,
     FlightItemState,
     FlightSession,
     FlightSessionAttribute,
@@ -455,3 +457,52 @@ class TestPluginStateIdleAndShowRule(_Base):
         self.assertIn(RULE_PARKING_BRAKE_ON["dataref"], watch)
         self.assertIn("sim/test/go_around_watch", watch)
         item.delete()
+
+
+class TestPluginStateWarnItems(_Base):
+    """
+    Warn items are gated by attr 3 (Informational) which is absent from the session.
+    They are hidden by shouldshow() but included via should_warn(), flowing through
+    the same gate loop as regular mandatory items.
+    """
+
+    def setUp(self):
+        super().setUp()
+        # attr 3 exists in DB but is NOT added to the session's FlightSessionAttribute
+        # → active_attr_ids is empty → warn items have should_warn() = True
+        self.info_attr = Attribute.objects.create(
+            pk=CheckItem._INFO_ATTR, title="Informational Items", order=99
+        )
+
+    def _make_warn_item(self, step, rule):
+        item = CheckItemFactory(procedure=self.procedure, step=step, auto_check_rule=rule)
+        item.attributes.add(self.info_attr)
+        return item
+
+    def test_warn_item_passing_rule_is_auto_checked(self):
+        """A warn item whose rule passes is auto-checked like any mandatory item."""
+        item = self._make_warn_item(step=1, rule=RULE_PARKING_BRAKE_ON)
+        datarefs = {RULE_PARKING_BRAKE_ON["dataref"]: 1}  # rule passes
+        resp = _post(self.client, self._valid_body(datarefs=datarefs), key=self.raw_key)
+        self.assertIn(item.pk, resp.json()["checked"])
+
+    def test_warn_item_failing_rule_not_in_checked(self):
+        """A warn item whose rule fails is not auto-checked."""
+        item = self._make_warn_item(step=1, rule=RULE_PARKING_BRAKE_ON)
+        datarefs = {RULE_PARKING_BRAKE_ON["dataref"]: 0}  # rule fails (expects 1)
+        resp = _post(self.client, self._valid_body(datarefs=datarefs), key=self.raw_key)
+        self.assertNotIn(item.pk, resp.json()["checked"])
+
+    def test_warn_item_failing_rule_blocks_subsequent_item(self):
+        """A failing warn item acts as a gate: items after it are not auto-checked."""
+        warn_item = self._make_warn_item(step=1, rule=RULE_PARKING_BRAKE_ON)
+        # Mandatory item after warn item (no attributes → always shown, not a warn item)
+        subsequent = CheckItemFactory(
+            procedure=self.procedure, step=2, auto_check_rule=RULE_PARKING_BRAKE_OFF
+        )
+        # parking_brake = 0: warn_item fails (expects 1); subsequent would pass (expects 0)
+        datarefs = {RULE_PARKING_BRAKE_ON["dataref"]: 0}
+        resp = _post(self.client, self._valid_body(datarefs=datarefs), key=self.raw_key)
+        checked = resp.json()["checked"]
+        self.assertNotIn(warn_item.pk, checked)
+        self.assertNotIn(subsequent.pk, checked)

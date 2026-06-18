@@ -168,6 +168,67 @@ class TestUserProfile(TestCase):
         user.save()  # triggers post_save again
         self.assertEqual(UserProfile.objects.filter(user=user).count(), 1)
 
+class TestCheckItemShouldWarn(TestCase):
+    """Tests for CheckItem.should_warn(profile_list)."""
+
+    def setUp(self):
+        sop = SOP.objects.create(name="SOP", icao_code="TST", content_version="1.0.0")
+        proc = Procedure.objects.create(title="Preflight", step=1, sop=sop)
+
+        # Create the "Informational Items" attribute with the hardcoded _INFO_ATTR PK
+        self.info_attr = Attribute.objects.create(
+            pk=CheckItem._INFO_ATTR, title="Informational", order=1
+        )
+        # A condition-based attribute (e.g. anti-ice), not attr 3
+        self.cond_attr = Attribute.objects.create(pk=7, title="AntiIce", order=2)
+
+        rule = {"dataref": "sim/test/dr", "op": "eq", "value": 0}
+
+        # Item with no rule — never warns
+        self.no_rule = CheckItem.objects.create(item="No Rule", procedure=proc, step=1)
+        self.no_rule.attributes.add(self.info_attr)
+
+        # Item with rule, only attr 3 → warns when attr 3 is off
+        self.info_item = CheckItem.objects.create(
+            item="Info Item", procedure=proc, step=2, auto_check_rule=rule
+        )
+        self.info_item.attributes.add(self.info_attr)
+
+        # Item with rule, attrs [3, 7] → warns only when attr 7 is present but attr 3 missing
+        self.multi_item = CheckItem.objects.create(
+            item="Multi Item", procedure=proc, step=3, auto_check_rule=rule
+        )
+        self.multi_item.attributes.add(self.info_attr)
+        self.multi_item.attributes.add(self.cond_attr)
+
+    def test_no_rule_never_warns(self):
+        self.assertFalse(self.no_rule.should_warn([]))
+
+    def test_visible_item_does_not_warn(self):
+        # shouldshow is True when attr 3 IS in profile
+        profile = [self.info_attr.pk]
+        self.assertTrue(self.info_item.shouldshow(profile))
+        self.assertFalse(self.info_item.should_warn(profile))
+
+    def test_warns_when_hidden_only_by_attr3(self):
+        # Only attr 3 missing → should warn
+        self.assertTrue(self.info_item.should_warn([]))
+
+    def test_no_warn_when_both_attrs_missing(self):
+        # Both attr 3 and cond_attr missing → missing != {3} → no warn
+        self.assertFalse(self.multi_item.should_warn([]))
+
+    def test_no_warn_for_multi_attr_item_even_when_only_attr3_missing(self):
+        # Item has [3, cond_attr]; cond_attr in profile but attr 3 off.
+        # Multi-attr items never warn — only items gated solely by attr 3 do.
+        self.assertFalse(self.multi_item.should_warn([self.cond_attr.pk]))
+
+    def test_no_warn_when_cond_attr_missing_and_attr3_present(self):
+        # cond_attr missing but attr 3 is on → shouldshow False,
+        # but missing is {cond_attr} ≠ {3} → no warn
+        self.assertFalse(self.multi_item.should_warn([self.info_attr.pk]))
+
+
 class TestFlightSession(TestCase):
 
     def _make_attr(self, title="Optional", order=1):

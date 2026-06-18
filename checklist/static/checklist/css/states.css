@@ -161,3 +161,12 @@
 .info-row-value.value-live {
   color: var(--color-teal-bright);
 }
+
+
+/* ── Warn-mode rows (hidden by attr 3; visible when rule fails + sim connected) */
+
+.ci.ci-warn {
+  background-color: #8bd998;
+  border: 1px solid #c2d9c6;
+  border-left: 3px solid #111714;
+}

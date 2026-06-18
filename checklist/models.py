@@ -169,6 +169,25 @@ class CheckItem(models.Model):
         # Is a mandatory checkitem as it has no attributes
         return True
 
+    _INFO_ATTR = 3  # Informational Items — hidden for clutter but safety-relevant
+
+    def should_warn(self, profile_list):
+        """
+        True when this item should surface as an inline warning row despite being
+        hidden by shouldshow(). Precondition: only call when shouldshow() is False —
+        both callers (procedure_detail elif and plugin_state or-expression) guarantee
+        this via Python short-circuit, so no redundant shouldshow() call is needed.
+
+        An item warns when its auto_check_rule can fail AND attr 3 is its ONLY
+        gate — meaning it is unconditionally shown to all pilots except those who
+        opted out of Informational Items. Items that are also optional [3, 4] or
+        situationally gated [3, 10] are never warnings regardless of profile.
+        """
+        if self.auto_check_rule is None:
+            return False
+        attr_ids = set(self.attributes.values_list("id", flat=True))
+        return attr_ids == {self._INFO_ATTR} and self._INFO_ATTR not in set(profile_list)
+
     class Meta:
         ordering = ["step"]
 

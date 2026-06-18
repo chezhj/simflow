@@ -113,8 +113,9 @@
             <div class="section-label js-hidden" id="label-completed">Completed</div>
 
             {% for item in check_items %}
-                <div class="ci {% if item.lowlight %}lowlight{% endif %} {{ item.checked_css }}"
+                <div class="ci {% if item.warn_mode %}ci-warn js-hidden{% endif %}{% if item.lowlight %} lowlight{% endif %} {{ item.checked_css }}"
                      data-item-id="{{ item.id }}"
+                     {% if item.warn_mode %}data-warn="true"{% endif %}
                      role="button"
                      tabindex="0"
                      aria-label="{{ item.item }}">
@@ -196,7 +197,7 @@
         + '<path d="M1 3.5L4 6.5L10 1" stroke="white" stroke-width="1.8"'
         + ' stroke-linecap="round" stroke-linejoin="round"/></svg>';
 
-    var totalItems       = document.querySelectorAll('.ci').length;
+    var totalItems       = document.querySelectorAll('.ci:not([data-warn])').length;
     var checkedCount     = document.querySelectorAll('.ci-manual, .ci-auto, .ci-skipped').length;
     var autoCount        = document.querySelectorAll('.ci-auto').length;
     var manualCount      = document.querySelectorAll('.ci-manual').length;
@@ -240,9 +241,11 @@
         var labelEl = document.getElementById('label-completed');
         if (labelEl) labelEl.classList.toggle('js-hidden', checkedCount === 0);
 
-        /* Auto-advance when all items are checked this visit.
+        /* Auto-advance when all items are checked this visit and no warn row is
+           actively blocking (visible = rule is currently failing).
            autoContinue controls destination only: True → nextproc, False → idle. */
-        if (hasCheckedThisVisit && checkedCount === totalItems && totalItems > 0) {
+        var visibleWarnCount = document.querySelectorAll('.ci-warn:not(.js-hidden)').length;
+        if (hasCheckedThisVisit && checkedCount === totalItems && totalItems > 0 && visibleWarnCount === 0) {
             setTimeout(function () {
                 {% if nextproc %}
                 if (autoContinue) {
@@ -362,7 +365,9 @@
         if (rules && rules.length > 0) {
             html += '<div class="debug-group-title">Check items</div>';
             html += rules.map(function (r) {
-                var gateTag = r.is_gate
+                var gateTag = r.is_warn
+                    ? '<span class="debug-tag debug-tag-warn">WARN</span>'
+                    : r.is_gate
                     ? '<span class="debug-tag debug-tag-gate">GATE</span>'
                     : '<span class="debug-tag debug-tag-opt">OPT</span>';
                 var overallIcon = r.rule_pass
@@ -426,7 +431,8 @@
         for (var i = startIdx; i < rows.length; i++) {
             if (!rows[i].classList.contains('ci-manual')
              && !rows[i].classList.contains('ci-auto')
-             && !rows[i].classList.contains('ci-skipped')) {
+             && !rows[i].classList.contains('ci-skipped')
+             && !rows[i].classList.contains('js-hidden')) {
                 var container    = document.getElementById('checklist-scroll');
                 var anchor       = i > 0 ? rows[i - 1] : rows[i];
                 var containerTop = container.getBoundingClientRect().top;
@@ -458,6 +464,13 @@
     window.markItem = function (id, source) {
         var row = document.querySelector('[data-item-id="' + id + '"]');
         if (!row) return;
+
+        /* Warn items are not checklist steps — just hide them when their rule passes */
+        if (row.dataset.warn) {
+            row.classList.add('js-hidden');
+            updateProgress();
+            return;
+        }
 
         var alreadyCounted = row.classList.contains('ci-manual') || row.classList.contains('ci-auto') || row.classList.contains('ci-skipped');
 
@@ -637,6 +650,17 @@
             lastPoll = Math.floor(Date.now() / 1000);
 
             data.checked_items.forEach(function (item) { markItem(item.id, item.source); });
+
+            /* Warn rows: show only items the server says are active and currently
+               failing. active_warn_ids is the authoritative list — it respects the
+               gate window and rule evaluation, so unrelated warn items stay hidden. */
+            var activeWarnIds = new Set((data.active_warn_ids || []).map(Number));
+            document.querySelectorAll('.ci-warn[data-item-id]').forEach(function (row) {
+                var id = parseInt(row.dataset.itemId, 10);
+                row.classList.toggle('js-hidden', !activeWarnIds.has(id) || !data.sim_connected);
+            });
+            updateProgress();
+
             /* Every procedure is always reachable in the nav now; show_procedures
                only drives the suggested highlight + banner (no auto-nav here). */
             applySuggestions(data.show_procedures || []);

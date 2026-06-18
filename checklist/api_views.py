@@ -153,6 +153,63 @@ def poll_view(request):
             display = "—"
         show_live_values.append({"label": dr.label, "value": display, "unit": dr.unit})
 
+    # ── active_warn_ids: warn items that are currently active and failing ───────
+    # Sent on every poll so the JS shows only the specific warn row(s) that are
+    # currently blocking, not all warn rows at once.
+    _OPTIONAL_ATTR = 4
+
+    procedure_slug = request.GET.get("procedure", "")
+    active_warn_ids = []
+    _poll_procedure = None          # reused by DEBUG block below
+    _poll_active_attr_ids = None
+    _poll_done_ids = None
+    _poll_visible_items = None
+    _poll_gate_step = None
+
+    if procedure_slug:
+        try:
+            _poll_procedure = Procedure.objects.get(slug=procedure_slug)
+            _poll_active_attr_ids = list(
+                FlightSessionAttribute.objects.filter(
+                    flight_session=session, is_active=True
+                ).values_list("attribute_id", flat=True)
+            )
+            _poll_done_ids = set(
+                FlightItemState.objects.filter(
+                    flight_session=session, status__in=("checked", "skipped")
+                ).values_list("checklist_item_id", flat=True)
+            )
+            _poll_all_items = list(
+                CheckItem.objects.filter(procedure=_poll_procedure)
+                .prefetch_related("attributes")
+                .order_by("step")
+            )
+            _poll_visible_items = [
+                i for i in _poll_all_items
+                if i.shouldshow(_poll_active_attr_ids) or i.should_warn(_poll_active_attr_ids)
+            ]
+
+            def _is_optional(item):
+                return any(a.pk == _OPTIONAL_ATTR for a in item.attributes.all())
+
+            _poll_gate_step = None
+            for item in _poll_visible_items:
+                if item.pk not in _poll_done_ids and not _is_optional(item):
+                    _poll_gate_step = item.step
+                    break
+
+            for item in _poll_visible_items:
+                if not item.should_warn(_poll_active_attr_ids):
+                    continue
+                if item.pk in _poll_done_ids:
+                    continue
+                if _poll_gate_step is not None and item.step > _poll_gate_step:
+                    continue
+                if item.auto_check_rule is not None and not evaluate_rule(item.auto_check_rule, last_state):
+                    active_warn_ids.append(item.pk)
+        except Procedure.DoesNotExist:
+            pass
+
     response = {
         "checked_items": checked_items,
         "sim_connected": sim_connected,
@@ -160,46 +217,25 @@ def poll_view(request):
         "last_seen": last_seen,
         "show_procedures": show_procedures,
         "show_live_values": show_live_values,
+        "active_warn_ids": active_warn_ids,
     }
 
     if settings.DEBUG and session is not None:
-        procedure_slug = request.GET.get("procedure", "")
         debug_rules = []
-        if procedure_slug:
+        if _poll_procedure is not None:
             try:
-                procedure = Procedure.objects.get(slug=procedure_slug)
-                active_attr_ids = list(
-                    FlightSessionAttribute.objects.filter(
-                        flight_session=session, is_active=True
-                    ).values_list("attribute_id", flat=True)
-                )
-                done_ids = set(
-                    FlightItemState.objects.filter(
-                        flight_session=session, status__in=("checked", "skipped")
-                    ).values_list("checklist_item_id", flat=True)
-                )
-                all_items = list(
-                    CheckItem.objects.filter(procedure=procedure)
-                    .prefetch_related("attributes")
-                    .order_by("step")
-                )
-                visible_items = [i for i in all_items if i.shouldshow(active_attr_ids)]
-
-                _OPTIONAL_ATTR = 4
-
-                def _is_optional(item):
-                    return any(a.pk == _OPTIONAL_ATTR for a in item.attributes.all())
-
-                gate_step = None
-                for item in visible_items:
-                    if item.pk not in done_ids and not _is_optional(item):
-                        gate_step = item.step
-                        break
+                active_attr_ids = _poll_active_attr_ids
+                done_ids = _poll_done_ids
+                visible_items = _poll_visible_items
+                gate_step = _poll_gate_step
 
                 active_items = [
                     i for i in visible_items
                     if i.pk not in done_ids and (gate_step is None or i.step <= gate_step)
                 ]
+
+                warn_items = [i for i in visible_items if i.should_warn(active_attr_ids)]
+                warn_ids = {i.pk for i in warn_items}
 
                 for item in active_items:
                     if item.auto_check_rule is None:
@@ -209,12 +245,26 @@ def poll_view(request):
                         "item": item.item,
                         "step": item.step,
                         "is_gate": item.step == gate_step and not _is_optional(item),
+                        "is_warn": item.pk in warn_ids,
+                        "rule_pass": evaluate_rule(item.auto_check_rule, last_state),
+                        "conditions": collect_leaf_evaluations(item.auto_check_rule, last_state),
+                    })
+
+                for item in warn_items:
+                    if item.auto_check_rule is None or item.pk in {r["item_id"] for r in debug_rules}:
+                        continue
+                    debug_rules.append({
+                        "item_id": item.pk,
+                        "item": item.item,
+                        "step": item.step,
+                        "is_gate": False,
+                        "is_warn": True,
                         "rule_pass": evaluate_rule(item.auto_check_rule, last_state),
                         "conditions": collect_leaf_evaluations(item.auto_check_rule, last_state),
                     })
             except Exception:
                 pass
-        response["debug_rules"] = debug_rules
+        response["debug_rules"] = debug_rules  # noqa: F821 (always set above)
 
         # show_rule evaluations for conditional procedures
         debug_show_procedures = []
