@@ -52,7 +52,7 @@ except ImportError:
 
 # ── Plugin identity & version ──────────────────────────────────────────────── #
 
-PLUGIN_VERSION = "0.7.0"
+PLUGIN_VERSION = "1.0.0"
 
 plugin_name = "xFlow"
 plugin_sig = "xppython3.xflow"
