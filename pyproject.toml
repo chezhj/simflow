@@ -1,6 +1,6 @@
 [project]
 name = "smarttrainingchecklist"
-version = "0.14.0"
+version = "2.0.0"
 description = "Webapplication to assist flight procedure"
 authors = [
     {name = "Hendrik-Jan",email = "h@vdwaal.net"}
@@ -39,7 +39,7 @@ tag_format = "v$version"
 version_scheme = "semver"
 version_provider = "pep621"
 update_changelog_on_bump = true
-major_version_zero = true
+
 version_files = [
     "smart_training_checklist/__init__.py",
 ]
