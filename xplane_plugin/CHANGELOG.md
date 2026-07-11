@@ -1,5 +1,11 @@
 # xFlow Plugin Changelog
 
+## [1.0.1] — 2026-07-11
+
+### Changed
+
+- Minor renaming error
+
 ## [1.0.0] — 2026-07-08
 
 ### Changed
