@@ -13,7 +13,7 @@ Installation:
        X-Plane 12/Resources/plugins/PythonPlugins/xFlow/config.ini
 
   Edit config.ini:
-    api_key     — paste your key from the xFlow profile page
+    api_key     — paste your key from the SimFlow profile page
     backend_url — leave as-is for local dev; change for production
     log_level   — DEBUG / INFO / WARNING / ERROR (default: INFO)
                   DEBUG shows watch list contents, dataref values, raw responses
@@ -56,7 +56,7 @@ PLUGIN_VERSION = "1.0.0"
 
 plugin_name = "xFlow"
 plugin_sig = "xppython3.xflow"
-plugin_desc = "xFlow – X-Plane checklist integration"
+plugin_desc = "xFlow – X-Plane integration for SimFlow, the smart checklist"
 
 # ── Command ────────────────────────────────────────────────────────────────── #
 

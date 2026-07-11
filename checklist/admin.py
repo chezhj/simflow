@@ -86,8 +86,8 @@ class RuleMissReportAdmin(admin.ModelAdmin):
         return False
 
 
-admin.site.site_header = "xFlow Admin"
-admin.site.site_title = "xFlow"
+admin.site.site_header = "SimFlow Admin"
+admin.site.site_title = "SimFlow"
 
 admin.site.register(SOP, SOPAdmin)
 admin.site.register(Procedure, ProcedureAdmin)

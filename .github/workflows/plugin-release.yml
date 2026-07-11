@@ -107,8 +107,8 @@ jobs:
                    config.ini
 
           2. Edit xFlow/config.ini:
-               api_key     — paste your key from the xFlow profile page
-               backend_url — URL of your xFlow server (default: http://cortado:8300)
+               api_key     — paste your key from the SimFlow profile page
+               backend_url — URL of the SimFlow server (simflow.vdwaal.net)
                log_level   — DEBUG / INFO / WARNING / ERROR
 
           Requirements

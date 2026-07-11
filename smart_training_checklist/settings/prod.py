@@ -5,7 +5,6 @@ import os
 from decouple import config
 from .base import *
 
-
 # SECURITY WARNING: keep the secret key used in production secret!
 SECRET_KEY = config("SECRET_KEY")
 
@@ -14,7 +13,7 @@ DEBUG = False
 
 ALLOWED_HOSTS = [
     "vdwaal.net",
-    "fly.vdwaal.net",
+    "simflow.vdwaal.net",
 ]
 
 WWW_DIR = os.path.join(Path(BASE_DIR).resolve(), "public_html")

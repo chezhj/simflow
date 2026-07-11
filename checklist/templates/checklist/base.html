@@ -3,15 +3,15 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <meta name="application-name" content="xFlow">
-    <meta name="description" content="xFlow — X-Plane procedure companion. Stay in the flow.">
+    <meta name="application-name" content="SimFlow">
+    <meta name="description" content="SimFlow — X-Plane procedure companion. Stay in the flow.">
     <meta name="keywords" content="737, checklist, simulation, X-Plane, training">
-    <title>{% block title %}xFlow{% endblock title %}</title>
+    <title>{% block title %}SimFlow{% endblock title %}</title>
     {% load static %}
     {% load environment_tags %}
     <link rel="icon" type="image/x-icon" href="{% static 'checklist/img/favicon.ico' %}">
-    <link rel="icon" type="image/png" sizes="256x256" href="{% static 'checklist/img/xflow-icon-256.png' %}">
-    <link rel="apple-touch-icon" sizes="256x256" href="{% static 'checklist/img/xflow-icon-256.png' %}">
+    <link rel="icon" type="image/png" sizes="256x256" href="{% static 'checklist/img/simflow-icon-256.png' %}">
+    <link rel="apple-touch-icon" sizes="256x256" href="{% static 'checklist/img/simflow-icon-256.png' %}">
     <link rel="stylesheet" href="{% static 'checklist/css/tokens.css' %}">
     <link rel="stylesheet" href="{% static 'checklist/css/layout.css' %}">
     <link rel="stylesheet" href="{% static 'checklist/css/components.css' %}">
@@ -25,8 +25,8 @@
          data-route="{% if request.session.sb_origin %}{{ request.session.sb_origin }}{% if request.session.sb_destination %} → {{ request.session.sb_destination }}{% endif %}{% endif %}">
         <!-- Brand: hidden on mobile, shown tablet+; links to checklist home -->
         <a href="{% url 'checklist:start' %}" class="conn-brand">
-            <img src="{% static 'checklist/img/xflow-mark.svg' %}" alt="xFlow" height="20" width="20">
-            <span class="conn-brand-text">x<span class="conn-brand-flow">Flow</span></span>
+            <img src="{% static 'checklist/img/simflow-mark.svg' %}" alt="SimFlow" height="20" width="20">
+            <span class="conn-brand-text">Sim<span class="conn-brand-flow">Flow</span></span>
         </a>
 
         <!-- Status group: sim dot + status text + route -->
@@ -72,7 +72,7 @@
     <div class="info-panel" id="info-panel" role="dialog" aria-modal="true" aria-label="Info panel">
 
         <div class="info-panel-header">
-            <span class="info-panel-title">xFlow</span>
+            <span class="info-panel-title">SimFlow</span>
             <button class="info-panel-close" id="info-close-btn" aria-label="Close info panel">✕</button>
         </div>
 
@@ -183,7 +183,7 @@
         {% endif %}
 
         <div class="info-footer">
-            xFlow · Made by CheZHJ · Based on Skymatix checklist
+            SimFlow · Made by CheZHJ · Based on Skymatix checklist
         </div>
     </div>
 
