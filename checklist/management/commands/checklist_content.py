@@ -7,6 +7,7 @@ Content models: Attribute, Procedure, CheckItem
 User/session models are never touched.
 """
 
+import io
 import json
 import sys
 from pathlib import Path
@@ -68,19 +69,26 @@ class Command(BaseCommand):
         fixture_path.parent.mkdir(parents=True, exist_ok=True)
 
         self.stdout.write("Exporting checklist content …")
-        with open(fixture_path, "w", encoding="utf-8") as f:
-            call_command(
-                "dumpdata",
-                *CONTENT_MODELS,
-                indent=2,
-                stdout=f,
-                natural_foreign=True,   # uses title/slug instead of raw PKs where possible
-                natural_primary=True,
-            )
+        # Buffer dumpdata's output, then re-write it as pure 7-bit ASCII.
+        # Django's JSON serializer defaults to ensure_ascii=False, so dumpdata
+        # emits raw UTF-8 (° — – ≤). A raw-UTF-8 fixture is prone to cp1252
+        # re-corruption on Windows — e.g. ° becomes "Â°", — becomes "â€"" —
+        # which then bakes mojibake into the DB on the next import. Escaping
+        # non-ASCII to \uXXXX keeps the committed fixture corruption-proof.
+        buffer = io.StringIO()
+        call_command(
+            "dumpdata",
+            *CONTENT_MODELS,
+            indent=2,
+            stdout=buffer,
+            natural_foreign=True,   # uses title/slug instead of raw PKs where possible
+            natural_primary=True,
+        )
+        data = json.loads(buffer.getvalue())
 
-        # Quick sanity check — count objects written
-        with open(fixture_path, encoding="utf-8") as f:
-            data = json.load(f)
+        # encoding="ascii" asserts purity — it errors if any non-ASCII slips through.
+        with open(fixture_path, "w", encoding="ascii") as f:
+            json.dump(data, f, indent=2, ensure_ascii=True)
 
         counts = {}
         for obj in data:

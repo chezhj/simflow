@@ -377,9 +377,9 @@
     "pk": 7,
     "fields": {
       "title": "Anti-Ice Normal",
-      "label": "Anti-Ice (\u00e2\u2030\u00a40\u00c2\u00b0C)",
+      "label": "Anti-Ice (\u22640\u00b0C)",
       "order": 8,
-      "description": "Temperature at or below 0\u00c2\u00b0C \u00e2\u20ac\u201d icing procedures apply",
+      "description": "Temperature at or below 0\u00b0C \u2014 icing procedures apply",
       "show": true,
       "is_user_preference": false,
       "over_ruled_by": null,
@@ -399,7 +399,7 @@
         ]
       },
       "live_rule_mode": "prompt_on_change",
-      "prompt_message": "OAT below 0 \u00c2\u00b0C \u00e2\u20ac\u201d Anti-Ice Normal procedures active?"
+      "prompt_message": "OAT below 0 \u00b0C \u2014 Anti-Ice Normal procedures active?"
     }
   },
   {
@@ -424,9 +424,9 @@
     "pk": 9,
     "fields": {
       "title": "ZeroToTen",
-      "label": "0\u00c2\u00b0C \u00e2\u20ac\u201c 10\u00c2\u00b0C Conditions",
+      "label": "0\u00b0C \u2013 10\u00b0C Conditions",
       "order": 22,
-      "description": "Temperature between 0\u00c2\u00b0C and 10\u00c2\u00b0C \u00e2\u20ac\u201d additional checks required",
+      "description": "Temperature between 0\u00b0C and 10\u00b0C \u2014 additional checks required",
       "show": true,
       "is_user_preference": false,
       "over_ruled_by": null,
@@ -451,7 +451,7 @@
         ]
       },
       "live_rule_mode": "prompt_on_change",
-      "prompt_message": "OAT 0\u00e2\u20ac\u201c10 \u00c2\u00b0C \u00e2\u20ac\u201d Zero-to-Ten temperature procedures active?"
+      "prompt_message": "OAT 0\u201310 \u00b0C \u2014 Zero-to-Ten temperature procedures active?"
     }
   },
   {
@@ -478,7 +478,7 @@
       "title": "No Pushback",
       "label": "No Pushback",
       "order": 20,
-      "description": "No pushback required \u00e2\u20ac\u201d engine start at stand",
+      "description": "No pushback required \u2014 engine start at stand",
       "show": true,
       "is_user_preference": false,
       "over_ruled_by": null,
@@ -3298,7 +3298,7 @@
       "item": "Engine Start Switches 1 & 2",
       "procedure": 6,
       "step": 205,
-      "setting": "AUTO (or CONT if < 10\u00c2\u00b0C + visible moisture)",
+      "setting": "AUTO (or CONT if < 10\u00b0C + visible moisture)",
       "action_label": "SET",
       "dataref_expression": "",
       "role": "PM",
