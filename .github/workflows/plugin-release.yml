@@ -118,7 +118,7 @@ jobs:
 
           Source & updates
           ----------------
-          https://github.com/chezhj/SmartTrainingChecklist/releases
+          https://github.com/chezhj/simflow/releases
           EOF
 
           cd "$STAGING"

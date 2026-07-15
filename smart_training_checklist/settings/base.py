@@ -136,7 +136,7 @@ PLUGIN_WARN_BELOW  = (0, 0, 0)   # nothing warned yet
 # Stable permalink to the latest plugin zip attached to the GitHub release.
 # The GitHub Actions workflow must upload the asset under this exact filename.
 PLUGIN_DOWNLOAD_URL = (
-    "https://github.com/chezhj/SmartTrainingChecklist"
+    "https://github.com/chezhj/simflow"
     "/releases/latest/download/xflow-plugin.zip"
 )
 

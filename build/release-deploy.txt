@@ -9,8 +9,8 @@ cd domains/vdwaal.net
 mkdir latest
 cd latest
 	- clone release
-git clone --branch release-tag https://github.com/chezhj/SmartTrainingChecklist.git
-git clone --branch v0.6.0alpha https://github.com/chezhj/SmartTrainingChecklist.git
+git clone --branch release-tag https://github.com/chezhj/simflow.git
+git clone --branch v0.6.0alpha https://github.com/chezhj/simflow.git
 
 - Now copy related files
 cd domains/vdwaal.net/latest/SmartTrainingChecklist

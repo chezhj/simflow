@@ -84,7 +84,7 @@ Pushing `plugin-v*` triggers `.github/workflows/plugin-release.yml`, which:
 - Creates `xflow-plugin.zip`.
 - Publishes a GitHub Release with the zip as the downloadable asset.
 
-Users download from `https://github.com/chezhj/SmartTrainingChecklist/releases`.
+Users download from `https://github.com/chezhj/simflow/releases`.
 
 ---
 

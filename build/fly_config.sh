@@ -1,4 +1,4 @@
-GITHUB_URL="https://github.com/chezhj/SmartTrainingChecklist.git"
+GITHUB_URL="https://github.com/chezhj/simflow.git"
 DOMAIN="fly.vdwaal.net"
 VERSION_FILE="smart_training_checklist/__init__.py"
 
