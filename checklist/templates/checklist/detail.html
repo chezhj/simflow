@@ -8,10 +8,11 @@
 
 {% block head %}
     <script src="{% static 'checklist/toggle_switches.js' %}"></script>
+    <script src="{% static 'checklist/wakelock.js' %}"></script>
 {% endblock head %}
 
 {% block content %}
-<div class="proc-layout">
+<div class="proc-layout" data-keep-screen-on="{{ keep_screen_on|yesno:'true,false' }}">
 
     <nav class="proc-sidebar" aria-label="Procedures">
         <div class="proc-sidebar-header">

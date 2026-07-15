@@ -741,8 +741,17 @@ def procedure_detail(request, slug=None, pk=None):
     all_procedures = list(Procedure.objects.order_by("step"))
     conditional_proc_slugs = [p.slug for p in all_procedures if p.show_rule is not None]
 
+    # Client-side screen wake lock preference (KeepScreenOn attribute, if active).
+    keep_screen_on_attr_id = (
+        Attribute.objects.filter(title="KeepScreenOn")
+        .values_list("id", flat=True)
+        .first()
+    )
+    keep_screen_on = keep_screen_on_attr_id in active_attr_ids
+
     context = {
         "procedure": procedure2view,
+        "keep_screen_on": keep_screen_on,
         "check_items": check_items,
         "nextproc": nextproc,
         "prevproc": prevproc,

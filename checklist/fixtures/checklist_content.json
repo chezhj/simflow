@@ -595,6 +595,23 @@
     }
   },
   {
+    "model": "checklist.attribute",
+    "pk": 18,
+    "fields": {
+      "title": "KeepScreenOn",
+      "label": "Keep Screen On",
+      "order": 9,
+      "description": "Prevent the device screen from sleeping during a procedure",
+      "show": true,
+      "is_user_preference": true,
+      "over_ruled_by": null,
+      "btn_color": "#194D33",
+      "live_rule": null,
+      "live_rule_mode": null,
+      "prompt_message": ""
+    }
+  },
+  {
     "model": "checklist.checkitem",
     "pk": 1,
     "fields": {
