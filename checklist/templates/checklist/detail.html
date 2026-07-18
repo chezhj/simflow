@@ -508,6 +508,13 @@
     var banner     = document.getElementById('suggest-banner');
     var bannerText = banner ? banner.querySelector('.suggest-banner-text') : null;
 
+    /* Hysteresis: show on the first firing poll, but require this many
+       consecutive non-firing polls before hiding. A show_rule sitting on a
+       threshold (or a single dropped plugin packet) would otherwise flip the
+       banner at the poll rate. */
+    var BANNER_IDLE_POLLS = 3;
+    var bannerIdleCount   = 0;
+
     function navElFor(slug) {
         return document.querySelector('a[data-conditional-slug="' + slug + '"]');
     }
@@ -550,12 +557,13 @@
         /* Banner reflects the first firing procedure (lowest step, as ordered by server) */
         if (banner) {
             if (firing.length) {
+                bannerIdleCount = 0;
                 var slug = firing[0];
                 var navEl = navElFor(slug);
                 if (navEl) banner.href = navEl.getAttribute('href');
                 if (bannerText) bannerText.textContent = navTitleFor(slug) + ' suggested — tap to open';
                 banner.classList.remove('js-hidden');
-            } else {
+            } else if (++bannerIdleCount >= BANNER_IDLE_POLLS) {
                 banner.classList.add('js-hidden');
             }
         }
@@ -656,9 +664,14 @@
                failing. active_warn_ids is the authoritative list — it respects the
                gate window and rule evaluation, so unrelated warn items stay hidden. */
             var activeWarnIds = new Set((data.active_warn_ids || []).map(Number));
+            /* Force-hide only when the sim is genuinely gone (>30 s), not on the
+               5 s sim_connected flag — one late packet would otherwise hide every
+               warn row and the next poll would re-show them, shifting the list. */
+            var simLost = !data.sim_connected && data.last_seen > 0 &&
+                          (Date.now() / 1000 - data.last_seen) >= 30;
             document.querySelectorAll('.ci-warn[data-item-id]').forEach(function (row) {
                 var id = parseInt(row.dataset.itemId, 10);
-                row.classList.toggle('js-hidden', !activeWarnIds.has(id) || !data.sim_connected);
+                row.classList.toggle('js-hidden', !activeWarnIds.has(id) || simLost);
             });
             updateProgress();
 

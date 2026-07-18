@@ -159,6 +159,8 @@ body {
   flex-direction: column;
   overflow: hidden;
   flex: 1;
+  /* Anchor for the absolutely positioned .suggest-banner overlay */
+  position: relative;
 }
 
 .checklist-scroll {
@@ -221,6 +223,12 @@ body {
   .proc-menu-toggle,
   .proc-sidebar-backdrop {
     display: none;
+  }
+
+  /* No ☰ to clear here, so the banner overlay can span the full width */
+  .suggest-banner {
+    left: 0;
+    border-bottom-left-radius: 0;
   }
 
   /* Main area fills remaining width */

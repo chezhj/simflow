@@ -179,14 +179,24 @@
 
 /* ── Suggestion banner (detail page) ────────────────────────────── */
 
+/* Overlays the top of .proc-header rather than sitting in the flex column.
+   Showing/hiding it must never change the height of .checklist-scroll, or the
+   pilot's scroll position shifts every time a rule flaps. Left inset on mobile
+   keeps the .proc-menu-toggle (☰) tappable while the banner is up. */
 .suggest-banner {
-  flex-shrink: 0;
+  position: absolute;
+  top: 0;
+  left: 48px;
+  right: 0;
+  z-index: 20;
   display: flex;
   align-items: center;
   gap: 8px;
   padding: 9px 16px;
-  background: rgba(245, 166, 35, 0.12);
+  /* Opaque — the header sits underneath and must not bleed through */
+  background: #FEF4E4;
   border-bottom: 1px solid rgba(245, 166, 35, 0.4);
+  border-bottom-left-radius: var(--radius-sm);
   color: var(--color-ink);
   text-decoration: none;
   font-size: 13px;
@@ -194,7 +204,7 @@
 }
 
 .suggest-banner:hover {
-  background: rgba(245, 166, 35, 0.18);
+  background: #FDEFD7;
 }
 
 .suggest-banner-icon {
