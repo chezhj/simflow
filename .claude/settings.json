@@ -1,0 +1,10 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(git -C \"c:/Users/h/Code/SmartTrainingChecklist\" diff --stat)",
+      "Bash(git -C \"c:/Users/h/Code/SmartTrainingChecklist\" status --short)",
+      "Bash(git -C \"c:/Users/h/Code/SmartTrainingChecklist\" log --oneline -5)",
+      "Bash(python manage.py shell --settings=smart_training_checklist.settings.dev -c ':*)"
+    ]
+  }
+}
