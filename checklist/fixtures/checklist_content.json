@@ -4905,7 +4905,7 @@
     "model": "checklist.checkitem",
     "pk": 195,
     "fields": {
-      "item": "ATC report ready for decend",
+      "item": "ATC report ready for descend",
       "procedure": 11,
       "step": 140,
       "setting": "Wait for approval",
@@ -4922,7 +4922,7 @@
     "model": "checklist.checkitem",
     "pk": 196,
     "fields": {
-      "item": "ATC decend (when ready)",
+      "item": "ATC descend (when ready)",
       "procedure": 11,
       "step": 150,
       "setting": "Set MCP altitude",
