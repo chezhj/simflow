@@ -1,10 +1,14 @@
 """
-manage.py checklist_content export   — dump Attribute, Procedure, CheckItem to a fixture
+manage.py checklist_content export   — dump SOP, Attribute, Procedure, CheckItem to a fixture
 manage.py checklist_content import   — load that fixture (safe: uses natural keys, skips conflicts)
 manage.py checklist_content import --replace  — wipe content tables first, then load
 
-Content models: Attribute, Procedure, CheckItem
+Content models: SOP, Attribute, Procedure, CheckItem
 User/session models are never touched.
+
+The fixture is the source of truth: edit it by hand, then import. Export is the
+escape hatch for changes made through the Django admin — it overwrites the whole
+fixture from the DB, so it asks for confirmation first.
 """
 
 import io
@@ -16,8 +20,9 @@ from django.core.management import call_command
 from django.core.management.base import BaseCommand, CommandError
 from django.db import transaction
 
-# The three content models, in dependency order for safe loading.
+# The content models, in dependency order for safe loading.
 CONTENT_MODELS = [
+    "checklist.sop",
     "checklist.attribute",
     "checklist.procedure",
     "checklist.checkitem",
@@ -28,7 +33,7 @@ DEFAULT_FIXTURE = Path("checklist") / "fixtures" / "checklist_content.json"
 
 class Command(BaseCommand):
     help = (
-        "Export or import checklist content data (Attribute, Procedure, CheckItem). "
+        "Export or import checklist content data (SOP, Attribute, Procedure, CheckItem). "
         "User and session data are never affected."
     )
 
@@ -67,6 +72,8 @@ class Command(BaseCommand):
 
     def _export(self, fixture_path: Path):
         fixture_path.parent.mkdir(parents=True, exist_ok=True)
+
+        self._confirm_export(fixture_path)
 
         self.stdout.write("Exporting checklist content …")
         # Buffer dumpdata's output, then re-write it as pure 7-bit ASCII.
@@ -140,6 +147,30 @@ class Command(BaseCommand):
     #  Helpers                                                             #
     # ------------------------------------------------------------------ #
 
+    def _confirm_export(self, fixture_path: Path):
+        """
+        Ask before overwriting the fixture.
+
+        The fixture is hand-edited and is the source of truth for checklist content.
+        Export rewrites it wholesale from the DB, so anything in the fixture that is
+        not currently in this database is lost.
+        """
+        if not fixture_path.exists():
+            return
+
+        self.stdout.write(
+            self.style.WARNING(
+                f"\nExport will OVERWRITE {fixture_path} with the current database "
+                "contents.\nThe fixture is the source of truth — any hand-edits not "
+                "imported into this DB will be lost.\nOnly do this to capture changes "
+                "made through the Django admin.\n"
+            )
+        )
+        answer = input("Type 'yes' to continue: ").strip().lower()
+        if answer != "yes":
+            self.stdout.write("Aborted.")
+            sys.exit(0)
+
     def _confirm_replace(self):
         """Ask for confirmation before wiping content tables."""
         self.stdout.write(
@@ -155,7 +186,12 @@ class Command(BaseCommand):
 
     @staticmethod
     def _wipe_content_tables():
-        """Delete content rows in reverse dependency order to avoid FK errors."""
+        """
+        Delete content rows in reverse dependency order to avoid FK errors.
+
+        SOP is deliberately not wiped — loaddata updates it in place by PK, and
+        deleting it would briefly drop the version the app reports.
+        """
         from checklist.models import CheckItem, Procedure, Attribute  # noqa: PLC0415
 
         CheckItem.objects.all().delete()

@@ -1,25 +1,30 @@
 #!/usr/bin/env python
 """
-Bump the content version of a SOP in the database.
+Bump the content version of a SOP.
 
 Usage:
     python scripts/bump_content_version.py B738 1.1.0
 
+The fixture (checklist/fixtures/checklist_content.json) is the source of truth for
+checklist content — you edit it by hand and import it. This script follows that
+direction: it writes the new version into the fixture, then loads the fixture into
+the dev database so the two agree.
+
 What it does:
-  1. Finds the SOP with the given ICAO code in the database.
+  1. Finds the SOP with the given ICAO code in the fixture.
   2. Drafts release notes from git log (commits touching migrations/ and fixtures/)
      since the previous sop-{icao}-v* tag.
   3. Opens the draft in $EDITOR (falls back to printing it) for you to edit.
-  4. Updates SOP.content_version and SOP.release_notes in the database.
-  5. Creates a git commit: "chore(sop): bump B738 content to X.Y.Z"
-  6. Creates a git tag: sop-B738-vX.Y.Z
+  4. Writes content_version and release_notes into the fixture.
+  5. Loads the fixture into the dev DB (manage.py checklist_content import).
+  6. Commits the fixture: "chore(sop): bump B738 content to X.Y.Z"
+  7. Creates a git tag: sop-B738-vX.Y.Z
 
-Run from the repo root with the Django dev settings active (uses manage.py shell).
-
-Note: changes made via the Django admin are NOT in git history unless you export
-and commit fixtures. Use the release notes to summarise admin-driven changes.
+Run from the repo root with the Django dev settings active.
 """
 
+import datetime
+import json
 import os
 import subprocess
 import sys
@@ -28,6 +33,7 @@ from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 MANAGE = REPO_ROOT / "manage.py"
+FIXTURE = REPO_ROOT / "checklist" / "fixtures" / "checklist_content.json"
 
 
 def _run(cmd: list[str], capture: bool = False) -> subprocess.CompletedProcess:
@@ -112,17 +118,49 @@ def _open_editor(draft: str) -> str:
     return "\n".join(lines).strip()
 
 
-def _update_db(icao: str, new_ver: str, notes: str) -> None:
-    """Update SOP in the database via manage.py shell."""
-    script = (
-        f"from checklist.models import SOP; "
-        f"sop = SOP.objects.get(icao_code='{icao}'); "
-        f"sop.content_version = '{new_ver}'; "
-        f"sop.release_notes = {notes!r}; "
-        f"sop.save(); "
-        f"print(f'Updated {{sop}}')"
+def _update_fixture(icao: str, new_ver: str, notes: str) -> None:
+    """
+    Write the new version and notes into the SOP record in the fixture.
+
+    Rewritten the same way the export command writes it: ASCII-escaped, indent=2.
+    A raw-UTF-8 fixture is prone to cp1252 re-corruption on Windows, which would
+    then bake mojibake into the DB on the next import.
+    """
+    if not FIXTURE.exists():
+        sys.exit(f"Fixture not found: {FIXTURE}")
+
+    with open(FIXTURE, encoding="utf-8") as f:
+        data = json.load(f)
+
+    matches = [
+        obj for obj in data
+        if obj.get("model") == "checklist.sop"
+        and obj.get("fields", {}).get("icao_code") == icao
+    ]
+    if not matches:
+        sys.exit(f"No checklist.sop record with icao_code '{icao}' in {FIXTURE.name}.")
+    if len(matches) > 1:
+        sys.exit(f"Multiple checklist.sop records with icao_code '{icao}' in {FIXTURE.name}.")
+
+    fields = matches[0]["fields"]
+    old_ver = fields.get("content_version")
+    fields["content_version"] = new_ver
+    fields["release_notes"] = notes
+    fields["updated_at"] = (
+        datetime.datetime.now(datetime.timezone.utc)
+        .isoformat(timespec="microseconds")
+        .replace("+00:00", "Z")
     )
-    _run([sys.executable, str(MANAGE), "shell", "-c", script])
+
+    with open(FIXTURE, "w", encoding="ascii") as f:
+        json.dump(data, f, indent=2, ensure_ascii=True)
+
+    print(f"  {FIXTURE.name}: {icao} {old_ver} -> {new_ver}")
+
+
+def _load_fixture() -> None:
+    """Load the fixture into the dev DB so it matches what was just written."""
+    _run([sys.executable, str(MANAGE), "checklist_content", "import"])
 
 
 def main() -> None:
@@ -143,11 +181,15 @@ def main() -> None:
     if not notes:
         sys.exit("Aborted — release notes are empty.")
 
-    print("Updating database …")
-    _update_db(icao, new_ver, notes)
+    print("Updating fixture …")
+    _update_fixture(icao, new_ver, notes)
+
+    print("Loading fixture into the dev database …")
+    _load_fixture()
 
     print("Committing …")
-    _run(["git", "commit", "--allow-empty", "-m", f"chore(sop): bump {icao} content to {new_ver}"])
+    _run(["git", "add", str(FIXTURE)])
+    _run(["git", "commit", "-m", f"chore(sop): bump {icao} content to {new_ver}"])
 
     tag = f"sop-{icao}-v{new_ver}"
     print(f"Tagging {tag} …")

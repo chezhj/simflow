@@ -29,7 +29,7 @@ Commitizen updates `smart_training_checklist/__init__.py` and `pyproject.toml`, 
 
 ```
 install.sh app <version-tag>   # git pull / clone at that tag
-deploy.sh app <version-tag>    # stop, deploy new code, run migrations, load fixtures, start
+deploy.sh app <version-tag>    # stop, deploy new code, run migrations, start
 ```
 
 ---
@@ -90,29 +90,25 @@ Users download from `https://github.com/chezhj/simflow/releases`.
 
 ## 3. SOP (checklist content) release
 
-A SOP bump records a new `content_version` and `release_notes` in the database. The production database receives the update when the fixture is loaded by `deploy.sh`.
+`checklist/fixtures/checklist_content.json` is the **source of truth** for checklist content. You edit it by hand and import it into the dev DB — the DB is a copy, never the origin. A SOP bump writes a new `content_version` and `release_notes` into that fixture, and production picks them up when the fixture is loaded there.
 
 ### Prerequisites
-- All checklist changes (via Django admin or migration) are applied to the **dev** database.
+- All checklist changes are made in the fixture and imported into the **dev** database.
 - Working tree is on `master`.
 
 ### Steps
 
-**1. Export the fixture**
+**1. Edit the fixture**
+
+Make your checklist changes directly in `checklist/fixtures/checklist_content.json`, then load them:
 
 ```
-python manage.py checklist_content export
+python manage.py checklist_content import
 ```
 
-Dumps `Attribute`, `Procedure`, and `CheckItem` to `checklist/fixtures/checklist_content.json` using natural keys. Prints a record count per model so you can sanity-check the output.
+Do **not** run `checklist_content export` as part of this flow — it rewrites the whole fixture from the DB and will discard anything the DB does not have. It exists only to capture changes made through the Django admin, and asks for confirmation before overwriting.
 
-**2. Stage the fixture**
-
-```
-git add checklist/fixtures/checklist_content.json
-```
-
-**3. Run the bump script**
+**2. Run the bump script**
 
 ```
 python scripts/bump_content_version.py B738 <new-version>
@@ -122,25 +118,26 @@ The script:
 - Drafts release notes from `git log` — commits touching `checklist/migrations/` or `checklist/fixtures/` since the previous `sop-B738-v*` tag.
 - Opens the draft in `$EDITOR` (if `$EDITOR` is not set, it prints the temp file path and waits for you to edit it manually).
 - Strips comment lines (lines starting with `#`) from what you save.
-- Updates `SOP.content_version` and `SOP.release_notes` in the dev DB via `manage.py shell`.
-- Commits the staged fixture plus the DB-touching shell command as `chore(sop): bump B738 content to X.Y.Z`.
+- Writes `content_version`, `release_notes` and `updated_at` into the `checklist.sop` record in the fixture.
+- Runs `checklist_content import` so the dev DB matches the fixture.
+- Stages and commits the fixture as `chore(sop): bump B738 content to X.Y.Z`.
 - Tags `sop-B738-vX.Y.Z`.
 
-**4. Push**
+**3. Push**
 
 ```
 git push && git push origin sop-B738-v<new-version>
 ```
 
-**5. Deploy to production** (run on the prod server)
+**4. Deploy to production** (run on the prod server)
 
 ```
 install.sh app <version-tag>   # use the app tag that contains this commit
-deploy.sh app <version-tag>    # loads the fixture, updating SOP.content_version on prod
+deploy.sh app <version-tag>
 ```
 
-> `deploy.sh` loads the fixture on production. The equivalent manual command is:
+> ⚠️ `deploy.sh` (in the separate deploy repo) does **not** load the fixture yet. Until it does, load it manually on prod after deploying:
 > ```
 > python manage.py checklist_content import --replace
 > ```
-> `--replace` wipes existing `Attribute`, `Procedure`, and `CheckItem` rows before loading, which avoids PK conflicts on a clean deploy. It asks for confirmation before deleting.
+> `--replace` wipes existing `Attribute`, `Procedure`, and `CheckItem` rows before loading, which avoids PK conflicts on a clean deploy. It asks for confirmation before deleting. `SOP` is not wiped — `loaddata` updates it in place by PK.
