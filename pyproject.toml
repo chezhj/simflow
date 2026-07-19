@@ -39,6 +39,7 @@ tag_format = "v$version"
 version_scheme = "semver"
 version_provider = "pep621"
 update_changelog_on_bump = true
+ignored_tag_formats = ["plugin-v*", "sop*"]
 
 version_files = [
     "smart_training_checklist/__init__.py",
