@@ -21,7 +21,8 @@
       "Bash(pytest checklist/tests/test_plugin_report_miss.py -v)",
       "Skill(smart-commit)",
       "Skill(smart-commit:*)",
-      "Bash(git mv *)"
+      "Bash(git mv *)",
+      "Bash(git commit -m 'chore\\(release\\): silence cz bump warnings for plugin and SOP tags' -m 'Adds ignored_tag_formats = [\"plugin-v*\", \"sop*\"] so commitizen stops *)"
     ]
   }
 }

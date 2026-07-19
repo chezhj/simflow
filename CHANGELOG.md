@@ -1,3 +1,15 @@
+## v2.1.0 (2026-07-19)
+
+### Feat
+
+- **checklist**: keep device screen awake during a procedure
+
+### Fix
+
+- **checklist**: keep scroll position steady when the suggestion banner appears
+- **content**: correct "decend" typo in ATC descend checklist items
+- **content**: repair mojibake and force ASCII on fixture export
+
 ## v2.0.1 (2026-07-11)
 
 ## v2.0.0 (2026-07-08)
