@@ -2,6 +2,7 @@
 manage.py checklist_content export   — dump SOP, Attribute, Procedure, CheckItem to a fixture
 manage.py checklist_content import   — load that fixture (safe: uses natural keys, skips conflicts)
 manage.py checklist_content import --replace  — wipe content tables first, then load
+manage.py checklist_content import --replace --noinput  — same, unattended (deploy scripts)
 
 Content models: SOP, Attribute, Procedure, CheckItem
 User/session models are never touched.
@@ -56,24 +57,37 @@ class Command(BaseCommand):
                 "Use this when IDs may clash (e.g. a clean production deploy)."
             ),
         )
+        parser.add_argument(
+            "--noinput",
+            "--no-input",
+            action="store_false",
+            dest="interactive",
+            help="Do not prompt for confirmation. Use in deploy scripts.",
+        )
 
     def handle(self, *args, **options):
         action = options["action"]
         fixture_path = Path(options["fixture"])
+        interactive = options["interactive"]
 
         if action == "export":
-            self._export(fixture_path)
+            self._export(fixture_path, interactive=interactive)
         else:
-            self._import(fixture_path, replace=options["replace"])
+            self._import(
+                fixture_path,
+                replace=options["replace"],
+                interactive=interactive,
+            )
 
     # ------------------------------------------------------------------ #
     #  Export                                                              #
     # ------------------------------------------------------------------ #
 
-    def _export(self, fixture_path: Path):
+    def _export(self, fixture_path: Path, interactive: bool = True):
         fixture_path.parent.mkdir(parents=True, exist_ok=True)
 
-        self._confirm_export(fixture_path)
+        if interactive:
+            self._confirm_export(fixture_path)
 
         self.stdout.write("Exporting checklist content …")
         # Buffer dumpdata's output, then re-write it as pure 7-bit ASCII.
@@ -109,7 +123,7 @@ class Command(BaseCommand):
     #  Import                                                              #
     # ------------------------------------------------------------------ #
 
-    def _import(self, fixture_path: Path, replace: bool):
+    def _import(self, fixture_path: Path, replace: bool, interactive: bool = True):
         if not fixture_path.exists():
             raise CommandError(
                 f"Fixture not found: {fixture_path}\n"
@@ -128,7 +142,8 @@ class Command(BaseCommand):
             self.stdout.write(f"  {model}: {count} records")
 
         if replace:
-            self._confirm_replace()
+            if interactive:
+                self._confirm_replace()
             self._wipe_content_tables()
 
         self.stdout.write("Loading fixture …")
