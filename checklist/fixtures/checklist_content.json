@@ -5,9 +5,9 @@
     "fields": {
       "name": "Boeing 737-800",
       "icao_code": "B738",
-      "content_version": "1.0.0",
-      "release_notes": "Initial SOP version.",
-      "updated_at": "2026-05-09T00:00:00Z"
+      "content_version": "1.0.1",
+      "release_notes": "Should have bumped earlier. Typos and restructure. Some datarefs changed.",
+      "updated_at": "2026-07-18T07:34:59.450818Z"
     }
   },
   {
