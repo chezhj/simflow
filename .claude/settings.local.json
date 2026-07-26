@@ -25,7 +25,10 @@
       "Bash(git commit -m 'chore\\(release\\): silence cz bump warnings for plugin and SOP tags' -m 'Adds ignored_tag_formats = [\"plugin-v*\", \"sop*\"] so commitizen stops *)",
       "Bash(.venv/Scripts/python.exe -c ' *)",
       "Bash(poetry env *)",
-      "Bash(git -c core.pager=cat diff HEAD --stat)"
+      "Bash(git -c core.pager=cat diff HEAD --stat)",
+      "Bash(git show *)",
+      "Bash(mkdir -p /tmp/dbcmp)",
+      "Read(//tmp/**)"
     ],
     "additionalDirectories": [
       "C:/Users/h/Code/www_installer"

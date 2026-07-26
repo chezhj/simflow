@@ -1,3 +1,18 @@
+## v2.2.0 (2026-07-26)
+
+### Feat
+
+- **content**: allow unattended checklist content import
+
+### Fix
+
+- **content**: resolve fixture path relative to the app, not cwd
+- **content**: sync SOP content_version 1.0.1 into fixture and fix release note typo
+
+### Refactor
+
+- **sop**: make the fixture the source for SOP version bumps
+
 ## v2.1.0 (2026-07-19)
 
 ### Feat
