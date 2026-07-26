@@ -17,6 +17,7 @@ import json
 import sys
 from pathlib import Path
 
+from django.apps import apps
 from django.core.management import call_command
 from django.core.management.base import BaseCommand, CommandError
 from django.db import transaction
@@ -29,7 +30,11 @@ CONTENT_MODELS = [
     "checklist.checkitem",
 ]
 
-DEFAULT_FIXTURE = Path("checklist") / "fixtures" / "checklist_content.json"
+# Anchored to the app directory, not the working directory: deploy scripts run
+# manage.py from wherever they happen to have cd'd to.
+DEFAULT_FIXTURE = (
+    Path(apps.get_app_config("checklist").path) / "fixtures" / "checklist_content.json"
+)
 
 
 class Command(BaseCommand):
