@@ -1,3 +1,9 @@
+## v2.2.1 (2026-07-31)
+
+### Fix
+
+- **content**: gate Descent Procedure show_rule on flightphase_cruise
+
 ## v2.2.0 (2026-07-26)
 
 ### Feat
