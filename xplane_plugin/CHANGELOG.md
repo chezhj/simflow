@@ -1,5 +1,10 @@
 # xFlow Plugin Changelog
 
+## [1.0.2] — 2026-07-31
+
+### Changed
+- Fixed config template to prod settings
+
 ## [1.0.1] — 2026-07-11
 
 ### Changed
