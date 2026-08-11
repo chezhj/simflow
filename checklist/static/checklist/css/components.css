@@ -2490,3 +2490,65 @@
   color: var(--color-ink-muted);
 }
 
+/* ── Item properties popover (dev shortcut: Ctrl+Shift+click a row) ── */
+.iprops-pop {
+  position: fixed;
+  z-index: 1000;
+  min-width: 200px;
+  background: var(--color-dark);
+  color: #FFFFFF;
+  border-radius: var(--radius-md);
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.35);
+  padding: var(--space-2);
+  font-family: var(--font-sans);
+  font-size: 13px;
+}
+
+.iprops-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  font-weight: 600;
+  padding: 0 var(--space-1) var(--space-2);
+  border-bottom: 1px solid rgba(255, 255, 255, 0.15);
+  margin-bottom: var(--space-1);
+}
+
+.iprops-close {
+  background: none;
+  border: none;
+  color: var(--color-ink-faint);
+  cursor: pointer;
+  font-size: 14px;
+  line-height: 1;
+  padding: 2px 4px;
+}
+
+.iprops-close:hover {
+  color: #FFFFFF;
+}
+
+.iprops-row {
+  display: flex;
+  justify-content: space-between;
+  gap: var(--space-4);
+  padding: 3px var(--space-1);
+}
+
+.iprops-key {
+  color: var(--color-ink-faint);
+}
+
+.iprops-val {
+  font-family: var(--font-mono);
+}
+
+.iprops-copy {
+  cursor: pointer;
+  border-bottom: 1px dotted rgba(255, 255, 255, 0.4);
+}
+
+.iprops-copy:hover {
+  color: var(--color-teal-bright);
+}
+

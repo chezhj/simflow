@@ -116,6 +116,9 @@
             {% for item in check_items %}
                 <div class="ci {% if item.warn_mode %}ci-warn js-hidden{% endif %}{% if item.lowlight %} lowlight{% endif %} {{ item.checked_css }}"
                      data-item-id="{{ item.id }}"
+                     data-step="{{ item.step }}"
+                     data-role="{{ item.role }}"
+                     data-attrs="{% for a in item.attributes.all %}{{ a.id }}{% if not forloop.last %},{% endif %}{% endfor %}"
                      {% if item.warn_mode %}data-warn="true"{% endif %}
                      role="button"
                      tabindex="0"
@@ -447,9 +450,96 @@
         }
     }
 
+    /* ── Item properties popover (Ctrl+Shift+click a row) ── */
+    var propsPop = null;
+
+    function closeItemProps() {
+        if (propsPop) { propsPop.remove(); propsPop = null; }
+        document.removeEventListener('keydown', onPropsKeydown, true);
+        document.removeEventListener('click', onPropsOutside, true);
+    }
+
+    function onPropsKeydown(e) {
+        if (e.key === 'Escape') { e.stopPropagation(); closeItemProps(); }
+    }
+
+    function onPropsOutside(e) {
+        if (propsPop && !propsPop.contains(e.target)) closeItemProps();
+    }
+
+    function propsRow(label, value, copyable) {
+        var row = document.createElement('div');
+        row.className = 'iprops-row';
+        var k = document.createElement('span');
+        k.className = 'iprops-key';
+        k.textContent = label;
+        var v = document.createElement('span');
+        v.className = 'iprops-val' + (copyable ? ' iprops-copy' : '');
+        v.textContent = value;
+        if (copyable) {
+            v.title = 'Click to copy';
+            v.addEventListener('click', function (e) {
+                e.stopPropagation();
+                if (navigator.clipboard) navigator.clipboard.writeText(value);
+                var was = v.textContent;
+                v.textContent = 'copied!';
+                setTimeout(function () { v.textContent = was; }, 900);
+            });
+        }
+        row.appendChild(k);
+        row.appendChild(v);
+        return row;
+    }
+
+    function showItemProps(row, e) {
+        closeItemProps();
+
+        propsPop = document.createElement('div');
+        propsPop.className = 'iprops-pop';
+
+        var head = document.createElement('div');
+        head.className = 'iprops-head';
+        var title = document.createElement('span');
+        title.textContent = 'Item properties';
+        var close = document.createElement('button');
+        close.className = 'iprops-close';
+        close.type = 'button';
+        close.setAttribute('aria-label', 'Close');
+        close.textContent = '✕';
+        close.addEventListener('click', function (ev) { ev.stopPropagation(); closeItemProps(); });
+        head.appendChild(title);
+        head.appendChild(close);
+        propsPop.appendChild(head);
+
+        propsPop.appendChild(propsRow('Key (pk)', row.dataset.itemId || '—', true));
+        propsPop.appendChild(propsRow('Step', row.dataset.step || '—', false));
+        propsPop.appendChild(propsRow('Role', row.dataset.role || '—', false));
+        propsPop.appendChild(propsRow('Attributes', row.dataset.attrs || '(none)', false));
+
+        document.body.appendChild(propsPop);
+
+        /* Position near the cursor, clamped to the viewport. */
+        var pad = 8;
+        var w = propsPop.offsetWidth;
+        var h = propsPop.offsetHeight;
+        var x = Math.min(e.clientX + pad, window.innerWidth  - w - pad);
+        var y = Math.min(e.clientY + pad, window.innerHeight - h - pad);
+        propsPop.style.left = Math.max(pad, x) + 'px';
+        propsPop.style.top  = Math.max(pad, y) + 'px';
+
+        document.addEventListener('keydown', onPropsKeydown, true);
+        document.addEventListener('click', onPropsOutside, true);
+    }
+
     /* ── Wire up click / keyboard handlers ── */
     document.querySelectorAll('.ci').forEach(function (row) {
-        row.addEventListener('click', function () {
+        row.addEventListener('click', function (e) {
+            if (e.ctrlKey && e.shiftKey) {   /* dev shortcut: inspect item props */
+                e.preventDefault();
+                e.stopPropagation();
+                showItemProps(row, e);
+                return;
+            }
             toggleItem(row);
         });
 
