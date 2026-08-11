@@ -218,10 +218,10 @@ class TestCheckItemShouldWarn(TestCase):
         # Both attr 3 and cond_attr missing → missing != {3} → no warn
         self.assertFalse(self.multi_item.should_warn([]))
 
-    def test_no_warn_for_multi_attr_item_even_when_only_attr3_missing(self):
-        # Item has [3, cond_attr]; cond_attr in profile but attr 3 off.
-        # Multi-attr items never warn — only items gated solely by attr 3 do.
-        self.assertFalse(self.multi_item.should_warn([self.cond_attr.pk]))
+    def test_warns_for_multi_attr_item_when_only_attr3_missing(self):
+        # Item has [3, cond_attr]; cond_attr in profile so it's satisfied, and attr 3
+        # is off. Attr 3 is the sole missing gate → warns and blocks the pilot.
+        self.assertTrue(self.multi_item.should_warn([self.cond_attr.pk]))
 
     def test_no_warn_when_cond_attr_missing_and_attr3_present(self):
         # cond_attr missing but attr 3 is on → shouldshow False,

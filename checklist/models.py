@@ -178,15 +178,22 @@ class CheckItem(models.Model):
         both callers (procedure_detail elif and plugin_state or-expression) guarantee
         this via Python short-circuit, so no redundant shouldshow() call is needed.
 
-        An item warns when its auto_check_rule can fail AND attr 3 is its ONLY
-        gate — meaning it is unconditionally shown to all pilots except those who
-        opted out of Informational Items. Items that are also optional [3, 4] or
-        situationally gated [3, 10] are never warnings regardless of profile.
+        An item warns when its auto_check_rule can fail AND attr 3 is the ONLY gate
+        keeping it hidden — meaning every other attribute is already satisfied by the
+        profile and only the Informational Items opt-out is suppressing it. This covers
+        both attr-3-only items [3] and items whose remaining gates are active env
+        defaults [3, 13]. Items still gated by an inactive attribute (e.g. [3, 10] when
+        10 is off) never warn, since attr 3 is not the sole missing gate.
         """
         if self.auto_check_rule is None:
             return False
         attr_ids = set(self.attributes.values_list("id", flat=True))
-        return attr_ids == {self._INFO_ATTR} and self._INFO_ATTR not in set(profile_list)
+        profile = set(profile_list)
+        return (
+            self._INFO_ATTR in attr_ids
+            and self._INFO_ATTR not in profile
+            and attr_ids - {self._INFO_ATTR} <= profile
+        )
 
     class Meta:
         ordering = ["step"]
