@@ -1,3 +1,13 @@
+## v2.3.0 (2026-08-11)
+
+### Feat
+
+- **checklist**: inspect item key/step via Ctrl+Shift+click
+
+### Fix
+
+- **checklist**: warn on safety items hidden only by Informational opt-out
+
 ## v2.2.1 (2026-07-31)
 
 ### Fix
