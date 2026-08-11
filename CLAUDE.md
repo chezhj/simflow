@@ -48,6 +48,33 @@ Settings are split into `smart_training_checklist/settings/`:
 
 ---
 
+## Deployment
+
+Deploys are automated via GitHub Actions and triggered by pushing a `v*` tag — which `cz bump` does for you (the `post_bump_hooks` `push_all` step pushes the tag). The pipeline runs tests, creates a GitHub release, ships the built tree to the cPanel/CloudLinux server (`simflow.vdwaal.net` on `/home/vdwanet`), then activates it with an automatic smoke test and rollback.
+
+Three moving parts:
+
+| Part | Where | Role |
+|---|---|---|
+| `.github/workflows/release-deploy.yaml` | this repo | Self-contained pipeline: test → release → rsync ship → activate/smoke/rollback. Trigger: `v*` tags only (`plugin-v*` / `sop*` do **not** match). |
+| `deploy/simflow_config.sh` | this repo | Secret-free per-app config, rsynced to `~/domains/simflow_config.sh` each deploy. Sets `DOMAIN`, `PYTHON_ENV`, `DJANGO_SETTINGS_MODULE=…settings.prod`, `DATABASE_SOURCE=production`, `POST_MIGRATE_COMMANDS`, `SMOKE_URL`. |
+| `~/deploy-tools/scripts/{activate,rollback}.sh` | server (from [`www_installer`](https://github.com/chezhj/www_installer)) | Bring a shipped release live: symlink shared `db.sqlite3`/`.env`, back up DB, `migrate`, run post-migrate commands, `collectstatic`, restart. Clone-bootstrapped by the workflow if missing. |
+
+**Persistent state** (`db.sqlite3`, `.env`) lives in `~/domains/shared/simflow/` and is symlinked into each release, so it survives deploys. Because `DATABASE_SOURCE=production`, the live DB is backed up before every `migrate`.
+
+**Checklist content ships with the app**: after `migrate`, `POST_MIGRATE_COMMANDS` runs `checklist_content import --replace --noinput`, which wipes and reloads the content tables from `checklist/fixtures/checklist_content.json` in that release. Edit content via the fixture (see the content workflow), not the destructive export. User/session data is never touched.
+
+**Requires** the `SSH_HOST` / `SSH_USER` / `SSH_PRIVATE_KEY` / `SSH_KNOWN_HOSTS` (and optional `SSH_PORT`) repo secrets. `passenger_wsgi.py` defaults `DJANGO_SETTINGS_MODULE` to prod so the live app runs prod settings.
+
+**Rollback** is automatic on a failed activate/smoke. Manual rollback on the server:
+
+```bash
+cd ~/domains && ~/deploy-tools/scripts/rollback.sh simflow
+# add --restore-db to also revert data if a migration ran
+```
+
+---
+
 ## Architecture
 
 Single Django app: **`checklist`**, mounted at `/` in `smart_training_checklist/urls.py`.

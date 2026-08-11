@@ -1,0 +1,236 @@
+name: Release & Deploy
+
+# SELF-CONTAINED deploy pipeline — copy this whole file into <app-repo>/.github/workflows/
+# and edit the marked per-repo values. It has no dependency on any workflow in another
+# repo, so it works even for repos you don't own / private repos across owners. The only
+# thing shared with www_installer is the activate.sh / rollback.sh scripts, which live on
+# the server in ~/deploy-tools (put there by www_installer's sync-tools.yml on release, and
+# clone-bootstrapped here if missing).
+#
+# Requires SSH_* secrets on THIS repo (Settings > Secrets and variables > Actions):
+#   SSH_HOST, SSH_USER, SSH_PRIVATE_KEY, SSH_KNOWN_HOSTS, and optionally SSH_PORT.
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write
+
+# Never let two deploys touch the server at once.
+concurrency:
+  group: production-deploy
+  cancel-in-progress: false
+
+env:
+  APP: simflow # <-- EDIT: the <app> argument for activate.sh/rollback.sh
+  VERSION_FILE: smart_training_checklist/__init__.py # <-- EDIT: file carrying __version__ = "X.Y.Z"
+  # URL of the deploy-tools repo cloned onto the server if not already present.
+  TOOLS_REPO: https://github.com/chezhj/www_installer
+
+jobs:
+  test:
+    name: Verify tag & run tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.11" # <-- EDIT per app
+
+      - name: Tag matches __version__
+        run: |
+          file_version="v$(grep -oP '__version__ = "\K[^"]+' "${VERSION_FILE}")"
+          echo "tag=${GITHUB_REF_NAME} file=${file_version}"
+          if [ "${file_version}" != "${GITHUB_REF_NAME}" ]; then
+            echo "::error::Tag ${GITHUB_REF_NAME} does not match ${VERSION_FILE} (${file_version})"
+            exit 1
+          fi
+
+      - name: Install dependencies
+        run: |
+          pip install poetry
+          poetry install --no-interaction
+
+      - name: Run tests
+        run: poetry run pytest
+
+  release:
+    name: Create GitHub release
+    needs: test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+      - name: Create release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "${GITHUB_REF_NAME}" \
+            --title "${GITHUB_REF_NAME}" \
+            --generate-notes
+
+  ship:
+    name: Build & ship (no server-side mutation)
+    needs: release
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.11"
+
+      - name: Generate requirements.txt from the lockfile
+        run: |
+          pip install poetry poetry-plugin-export
+          poetry export --without-hashes -f requirements.txt -o requirements.txt
+
+      - name: Attach requirements.txt to the release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release upload "${GITHUB_REF_NAME}" requirements.txt --clobber
+
+      - name: Configure SSH
+        run: |
+          install -m 700 -d ~/.ssh
+          printf '%s\n' "${{ secrets.SSH_PRIVATE_KEY }}" > ~/.ssh/id_deploy
+          chmod 600 ~/.ssh/id_deploy
+          printf '%s\n' "${{ secrets.SSH_KNOWN_HOSTS }}" > ~/.ssh/known_hosts
+          chmod 644 ~/.ssh/known_hosts
+
+      # Ships the built tree into releases/<app>_<tag>/ on the server, and the app's own
+      # secret-free deploy config to ~/domains/<app>_config.sh. Touches nothing live.
+      # Per-repo: adjust the exclude list to match this repo's layout.
+      - name: Ship release via rsync
+        env:
+          SSH_HOST: ${{ secrets.SSH_HOST }}
+          SSH_USER: ${{ secrets.SSH_USER }}
+          SSH_PORT: ${{ secrets.SSH_PORT }}
+        run: |
+          rsync -az --delete \
+            --exclude '.git' \
+            --exclude '.github' \
+            --exclude '.claude' \
+            --exclude '.vscode' \
+            --exclude '.venv' \
+            --exclude '.poetry' \
+            --exclude '.gitignore' \
+            --exclude '.pre-commit-config.yaml' \
+            --exclude '.pytest_cache' \
+            --exclude '__pycache__' \
+            --exclude '*.pyc' \
+            --exclude 'tests' \
+            --exclude 'deploy' \
+            --exclude 'docs' \
+            --exclude 'design-decisions' \
+            --exclude 'scripts' \
+            --exclude 'xplane_plugin' \
+            --exclude 'build' \
+            --exclude 'logs' \
+            --exclude 'db.sqlite3' \
+            --exclude 'cov.xml' \
+            --exclude 'requirements-p.txt' \
+            --exclude 'xChecklist-structure.txt' \
+            --exclude 'CLAUDE.md' \
+            -e "ssh -i ~/.ssh/id_deploy -p ${SSH_PORT:-22}" \
+            ./ "${SSH_USER}@${SSH_HOST}:domains/releases/${APP}_${GITHUB_REF_NAME}/"
+
+          # Ship the deploy config (kept in this repo under deploy/<app>_config.sh).
+          rsync -az \
+            -e "ssh -i ~/.ssh/id_deploy -p ${SSH_PORT:-22}" \
+            "deploy/${APP}_config.sh" "${SSH_USER}@${SSH_HOST}:domains/${APP}_config.sh"
+
+  activate:
+    name: Activate on server
+    needs: ship
+    runs-on: ubuntu-latest
+    # Everything from here touches the live app: pip install into the shared venv, migrate,
+    # move swap, restart. Add a `production` environment with a required reviewer here if
+    # you want a manual "Review deployment" pause before activation.
+    steps:
+      - name: Configure SSH
+        run: |
+          install -m 700 -d ~/.ssh
+          printf '%s\n' "${{ secrets.SSH_PRIVATE_KEY }}" > ~/.ssh/id_deploy
+          chmod 600 ~/.ssh/id_deploy
+          printf '%s\n' "${{ secrets.SSH_KNOWN_HOSTS }}" > ~/.ssh/known_hosts
+          chmod 644 ~/.ssh/known_hosts
+
+      # Clone-if-missing so a fresh server works on first deploy. Version management is
+      # otherwise owned by www_installer's sync-tools.yml (no forced checkout here).
+      - name: Ensure deploy tools present
+        env:
+          SSH_HOST: ${{ secrets.SSH_HOST }}
+          SSH_USER: ${{ secrets.SSH_USER }}
+          SSH_PORT: ${{ secrets.SSH_PORT }}
+        run: |
+          ssh -i ~/.ssh/id_deploy -p "${SSH_PORT:-22}" "${SSH_USER}@${SSH_HOST}" \
+            "bash -lc 'test -d ~/deploy-tools/.git || git clone ${TOOLS_REPO} ~/deploy-tools; git -C ~/deploy-tools describe --tags --always'"
+
+      - name: Activate on server
+        id: activate
+        env:
+          SSH_HOST: ${{ secrets.SSH_HOST }}
+          SSH_USER: ${{ secrets.SSH_USER }}
+          SSH_PORT: ${{ secrets.SSH_PORT }}
+        run: |
+          ssh -i ~/.ssh/id_deploy -p "${SSH_PORT:-22}" "${SSH_USER}@${SSH_HOST}" \
+            "bash -lc 'cd ~/domains && ~/deploy-tools/scripts/activate.sh ${APP} ${GITHUB_REF_NAME}'"
+
+      - name: Smoke test
+        id: smoke
+        env:
+          SSH_HOST: ${{ secrets.SSH_HOST }}
+          SSH_USER: ${{ secrets.SSH_USER }}
+          SSH_PORT: ${{ secrets.SSH_PORT }}
+        run: |
+          # Read SMOKE_URL out of the app's own config rather than duplicating it here.
+          smoke_url=$(ssh -i ~/.ssh/id_deploy -p "${SSH_PORT:-22}" "${SSH_USER}@${SSH_HOST}" \
+            "bash -lc 'cd ~/domains && source ${APP}_config.sh && echo \$SMOKE_URL'")
+          if [ -z "${smoke_url}" ]; then
+            echo "::error::SMOKE_URL is not set in ${APP}_config.sh"
+            exit 1
+          fi
+          for attempt in 1 2 3 4 5 6; do
+            code=$(curl -sSL -o /dev/null -w '%{http_code}' --max-time 20 "${smoke_url}" || echo 000)
+            echo "attempt ${attempt}: HTTP ${code}"
+            if [ "${code}" = "200" ]; then
+              exit 0
+            fi
+            sleep 10
+          done
+          echo "::error::Smoke test failed - ${smoke_url} never returned 200"
+          exit 1
+
+      - name: Roll back
+        if: failure() && (steps.activate.outcome == 'failure' || steps.smoke.outcome == 'failure')
+        env:
+          SSH_HOST: ${{ secrets.SSH_HOST }}
+          SSH_USER: ${{ secrets.SSH_USER }}
+          SSH_PORT: ${{ secrets.SSH_PORT }}
+        run: |
+          echo "::warning::Deploy failed - rolling back code (database is left untouched)"
+          set +e
+          output=$(ssh -i ~/.ssh/id_deploy -p "${SSH_PORT:-22}" "${SSH_USER}@${SSH_HOST}" \
+            "bash -lc 'cd ~/domains && ~/deploy-tools/scripts/rollback.sh ${APP}'" 2>&1)
+          rollback_status=$?
+          set -e
+          echo "$output"
+
+          {
+            echo "## Deploy failed - rollback report"
+            echo ""
+            echo '```'
+            echo "$output"
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+          if echo "$output" | grep -q "MIGRATION_MAY_HAVE_RUN"; then
+            echo "::warning::Code rolled back. Migrations may have run against the live database - it was NOT restored automatically. SSH in and run 'cd ~/domains && ~/deploy-tools/scripts/rollback.sh ${APP} --restore-db' to revert the data too (this discards writes made since the migration)."
+          fi
+
+          exit "$rollback_status"
