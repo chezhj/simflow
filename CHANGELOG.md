@@ -1,3 +1,9 @@
+## v2.3.1 (2026-08-12)
+
+### Fix
+
+- **content**: tighten After Landing show_rule with airspeed band and speedbrake
+
 ## v2.3.0 (2026-08-11)
 
 ### Feat
