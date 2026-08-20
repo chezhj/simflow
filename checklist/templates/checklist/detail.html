@@ -746,7 +746,12 @@
         try {
             var res = await fetch('/api/poll/?procedure={{ procedure.slug }}&since=' + lastPoll);
             var data = await res.json();
-            lastPoll = Math.floor(Date.now() / 1000);
+            /* Advance the cursor with the server's own clock so a state committed
+               between polls can't slip under a browser-clock cursor and be
+               dropped forever. Fall back to the local clock only if absent. */
+            lastPoll = (typeof data.server_time === 'number')
+                ? data.server_time
+                : Math.floor(Date.now() / 1000);
 
             data.checked_items.forEach(function (item) { markItem(item.id, item.source); });
 

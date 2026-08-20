@@ -291,7 +291,11 @@
         try {
             var res  = await fetch('/api/poll/?since=' + lastPoll);
             var data = await res.json();
-            lastPoll = Math.floor(Date.now() / 1000);
+            /* Server-clock cursor (see detail.html) — avoids browser clock skew
+               dropping a between-polls state update. */
+            lastPoll = (typeof data.server_time === 'number')
+                ? data.server_time
+                : Math.floor(Date.now() / 1000);
 
             applyShowProcedures(data.show_procedures || []);
             applyLiveValues(data.show_live_values || []);

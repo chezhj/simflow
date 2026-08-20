@@ -143,6 +143,36 @@ class TestPollView(TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertEqual(len(response.json()["checked_items"]), 1)
 
+    def test_response_includes_server_time_cursor(self):
+        # The client advances its poll cursor from this server-side timestamp
+        # instead of its own clock, so browser clock skew can't drop updates.
+        _set_session_key(self.client, self.session.session_key)
+        before = int(datetime.now(tz=timezone.utc).timestamp())
+        data = _get_poll(self.client).json()
+        after = int(datetime.now(tz=timezone.utc).timestamp())
+        self.assertIn("server_time", data)
+        self.assertIsInstance(data["server_time"], int)
+        self.assertGreaterEqual(data["server_time"], before)
+        self.assertLessEqual(data["server_time"], after)
+
+    def test_no_session_response_includes_server_time(self):
+        data = _get_poll(self.client).json()
+        self.assertIn("server_time", data)
+        self.assertIsInstance(data["server_time"], int)
+
+    def test_overlap_window_reincludes_state_on_prior_cursor_boundary(self):
+        # Regression: an item checked essentially at the moment of the previous
+        # poll must not be permanently skipped. A strict since==checked_at cursor
+        # dropped it forever (the Flaps auto-check desync); the overlap re-sends it.
+        state = self._seed_checked(source="auto")
+        _set_session_key(self.client, self.session.session_key)
+        # Client sends back exactly the item's own second as the cursor.
+        since = int(state.checked_at.timestamp())
+        items = _get_poll(self.client, since=since).json()["checked_items"]
+        self.assertEqual(len(items), 1)
+        self.assertEqual(items[0]["id"], self.item.id)
+        self.assertEqual(items[0]["source"], "AUTO")
+
     def test_poll_always_returns_show_procedures_key(self):
         _set_session_key(self.client, self.session.session_key)
         data = _get_poll(self.client).json()

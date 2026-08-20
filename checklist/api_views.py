@@ -1,7 +1,7 @@
 """JSON API endpoints for checklist item state management."""
 
 import json
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 from django.conf import settings
 from django.http import JsonResponse
@@ -9,6 +9,14 @@ from django.views.decorators.http import require_GET, require_POST
 
 from .models import Attribute, CheckItem, FlightItemState, FlightSession, FlightSessionAttribute, IdleDataref, Procedure
 from .rules import collect_datarefs, collect_leaf_evaluations, evaluate_rule
+
+# The poll cursor is a server timestamp echoed back to the client (see poll_view).
+# The server-clock cursor removes browser clock skew; this short overlap window
+# additionally re-scans the last couple of seconds so a state whose commit becomes
+# visible just after a poll's read — or lands right on the truncated-second
+# boundary — is never permanently skipped. markItem is idempotent, so re-sending a
+# handful of recent items each poll is harmless.
+_POLL_OVERLAP = timedelta(seconds=2)
 
 
 def _get_flight_session(request):
@@ -43,15 +51,24 @@ def poll_view(request):
     Returns checked items newer than `since` and the current sim connection state.
     No session → returns an empty-but-valid response (not 403).
     """
+    # Captured before any query runs: this is the high-water mark the client
+    # will send back as `since` on the next poll. Using the server clock (not the
+    # browser's Date.now()) removes the clock-skew gap that could permanently drop
+    # an auto/manual check from the display.
+    poll_started = datetime.now(tz=timezone.utc)
+    server_time = int(poll_started.timestamp())
+
     session = _get_flight_session(request)
     if session is None:
-        return JsonResponse({"checked_items": [], "sim_connected": False, "last_seen": 0})
+        return JsonResponse(
+            {"checked_items": [], "sim_connected": False, "last_seen": 0, "server_time": server_time}
+        )
 
     try:
         since_ts = int(request.GET.get("since", 0) or 0)
     except (ValueError, TypeError):
         since_ts = 0
-    since_dt = datetime.fromtimestamp(since_ts, tz=timezone.utc)
+    since_dt = datetime.fromtimestamp(since_ts, tz=timezone.utc) - _POLL_OVERLAP
 
     states = FlightItemState.objects.filter(
         flight_session=session,
@@ -215,6 +232,7 @@ def poll_view(request):
         "sim_connected": sim_connected,
         "sim_initializing": sim_initializing,
         "last_seen": last_seen,
+        "server_time": server_time,
         "show_procedures": show_procedures,
         "show_live_values": show_live_values,
         "active_warn_ids": active_warn_ids,
