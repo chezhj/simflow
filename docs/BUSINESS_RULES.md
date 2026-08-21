@@ -245,7 +245,12 @@ Source: `detail.html` — `toggleItem()` JS
 
 ## 14\. Plugin Gate / Active Zone Logic
 
-This determines which items the plugin evaluates auto-check rules for:
+This determines which items the plugin evaluates auto-check rules for. Behaviour
+depends on the per-flight **`FlightSession.require_all_visible`** snapshot — taken
+at session start from the `RequireAllVisible` user-preference attribute (a
+General toggle, attached to no check items, so it never affects visibility).
+
+**Default mode (`require_all_visible = False`):**
 
 1.  **Optional attribute:** `Attribute pk=4` — items with this attribute are "optional" (non-blocking).
 2.  **Gate:** The first visible, not-done, **required** (non-optional) item in the procedure.
@@ -253,23 +258,34 @@ This determines which items the plugin evaluates auto-check rules for:
 4.  Auto-check rules are only evaluated for items **in the active zone**.
 5.  Watch datarefs are collected from **all visible items** with rules (not just active zone) so the plugin keeps streaming them.
 
-CHANGE: Make sure to evaluate from top to bottom, optional items that are executed upon, and have all criteria met, should not be skipped because the gate item was evaluated first
+**RequireAllVisible mode (`require_all_visible = True`):**
 
-Source: `plugin_views.py — plugin_state()` lines 293–307
+- The **gate** is the first visible, not-done item — optional or required alike.
+- The active zone is therefore just the current gate item; each visible row must
+  be individually satisfied (auto-rule or manual tap) before the gate advances.
+- No item is ever auto-skipped (see §15). Informational/verify items simply
+  auto-confirm in sequence as the gate reaches them.
+
+Source: `plugin_views.py — plugin_state()` (`is_gate_candidate`)
 
 * * *
 
-## 15\. Auto-Skip Logic
+## 15\. Auto-Skip Logic (default mode only)
 
-When a required item's auto-check rule fires:
+**Only in default mode** (`require_all_visible = False`). When a required item's
+auto-check rule fires:
 
-1.  Any preceding optional items that are not-done are auto-skipped first.
+1.  Any preceding optional items that are not-done are auto-skipped first — unless
+    their own auto-check rule fires, in which case they are auto-checked instead.
 2.  The triggering item itself is auto-checked.
 
-Auto-skipped items get `status="skipped"`, `source="auto"` in `FlightItemState`. The browser renders them as `ci-skipped` (em-dash).  
-CHANGE: Make sure to evaluate from top to bottom, optional items that are executed upon, and have all criteria met, should not be skipped because the gate item was evaluated first
+Auto-skipped items get `status="skipped"`, `source="auto"` in `FlightItemState`. The browser renders them as `ci-skipped` (em-dash).
 
-Source: `plugin_views.py — plugin_state()` lines 350–377
+In **RequireAllVisible mode** this step is disabled entirely: the gate stops at the
+first not-done item, so there is never a preceding not-done optional to resolve,
+and `status="skipped"` is never produced by the engine.
+
+Source: `plugin_views.py — plugin_state()`
 
 * * *
 

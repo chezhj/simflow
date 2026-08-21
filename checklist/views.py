@@ -77,6 +77,21 @@ def _derive_ofp_attrib_ids(sb_temp: str, sb_bleed: str) -> set[int]:
 # ── Flight session creation ───────────────────────────────────────────────────
 
 
+# Behaviour-flag attribute (no CheckItem carries it — it never gates visibility).
+# When active, its value is snapshotted onto FlightSession.require_all_visible.
+_REQUIRE_ALL_VISIBLE_TITLE = "RequireAllVisible"
+
+
+def _require_all_visible(active_attr_ids) -> bool:
+    """True when the RequireAllVisible preference is in the active attribute set."""
+    attr_id = (
+        Attribute.objects.filter(title=_REQUIRE_ALL_VISIBLE_TITLE)
+        .values_list("id", flat=True)
+        .first()
+    )
+    return attr_id is not None and attr_id in set(active_attr_ids)
+
+
 def _get_user_default_ids(user_profile) -> set[int]:
     """Return the set of Attribute IDs saved as defaults for the given user profile."""
     if user_profile is None:
@@ -141,6 +156,12 @@ def _update_session_attributes(
             defaults={"is_active": is_active, "source": source},
         )
 
+    # Re-snapshot the flow-mode preference in case it changed on reconfigure.
+    require_all = _require_all_visible(active_ids)
+    if flight_session.require_all_visible != require_all:
+        flight_session.require_all_visible = require_all
+        flight_session.save(update_fields=["require_all_visible"])
+
 
 def _create_flight_session(
     user_profile,
@@ -165,15 +186,19 @@ def _create_flight_session(
         first_proc = Procedure.objects.order_by("step").first()
         active_phase = first_proc.slug if first_proc else ""
 
+    # Resolve the active attribute set up front so the flow-mode preference can be
+    # snapshotted onto the session at creation (stable for the whole flight).
+    active_ids = _resolve_active_ids(selected_attr_ids, ofp_attr_ids)
+
     session = FlightSession.objects.create(
         user_profile=user_profile,
         pilot_role=pilot_role,
         pilot_function=pilot_function,
         active_phase=active_phase,
+        require_all_visible=_require_all_visible(active_ids),
     )
 
     # Create one row per Attribute (eager seeding)
-    active_ids = _resolve_active_ids(selected_attr_ids, ofp_attr_ids)
     selected_set = set(selected_attr_ids)
     session_attrs = []
     for attr in Attribute.objects.all():

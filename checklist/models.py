@@ -276,6 +276,12 @@ class FlightSession(models.Model):
         help_text="Last evaluated show_rule result per procedure: {str(proc.pk): bool}. "
                   "Used for rising-edge detection in poll_view.",
     )
+    require_all_visible = models.BooleanField(
+        default=False,
+        help_text="Snapshot of the RequireAllVisible preference at session start. "
+                  "When True the flow gate covers every visible item (optional included) "
+                  "and no item is auto-skipped — each visible row must be checked.",
+    )
 
     class Meta:
         ordering = ["-created_at"]

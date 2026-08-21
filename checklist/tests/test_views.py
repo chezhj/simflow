@@ -357,6 +357,38 @@ class TestProfileView(ViewTestCase):
         self.assertEqual(session.pilot_role, "PF")
         self.assertTrue(request.session.get("dual_mode"))
 
+    def test_start_checklist_snapshots_require_all_visible(self):
+        attr = Attribute.objects.create(
+            title="RequireAllVisible", order=10, is_user_preference=True
+        )
+        request = self.create_request_with_session(
+            "/",
+            request_data={"action": "start_checklist", "attributes": str(attr.id)},
+        )
+        request.user = Mock(is_authenticated=False)
+        profile_view(request)
+
+        session = FlightSession.objects.get(
+            session_key=request.session["flight_session_key"]
+        )
+        self.assertTrue(session.require_all_visible)
+
+    def test_start_checklist_require_all_visible_defaults_false(self):
+        # The attribute exists but is not selected → snapshot stays False.
+        Attribute.objects.create(
+            title="RequireAllVisible", order=10, is_user_preference=True
+        )
+        request = self.create_request_with_session(
+            "/", request_data={"action": "start_checklist"}
+        )
+        request.user = Mock(is_authenticated=False)
+        profile_view(request)
+
+        session = FlightSession.objects.get(
+            session_key=request.session["flight_session_key"]
+        )
+        self.assertFalse(session.require_all_visible)
+
 
 class TestProcedureView(ViewTestCase):
 

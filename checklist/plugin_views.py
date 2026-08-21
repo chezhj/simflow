@@ -371,10 +371,18 @@ def plugin_state(request):
             def is_optional(item):
                 return any(a.pk == _OPTIONAL_ATTR for a in item.attributes.all())
 
-            # Gate: first visible, not-done, required (no attr 4) item
+            # RequireAllVisible mode: the gate covers every visible item (optional
+            # included) and nothing is auto-skipped — each visible row must be
+            # checked. Default mode: optionals are non-blocking and may be skipped.
+            require_all = session.require_all_visible
+
+            def is_gate_candidate(item):
+                return require_all or not is_optional(item)
+
+            # Gate: first visible, not-done, gate-candidate item
             gate_step = None
             for item in visible_items:
-                if item.pk not in done_ids and not is_optional(item):
+                if item.pk not in done_ids and is_gate_candidate(item):
                     gate_step = item.step
                     break
 
@@ -386,7 +394,7 @@ def plugin_state(request):
 
             # Log when the blocking gate item changes (Option A debug aid).
             gate_item = next(
-                (i for i in visible_items if i.pk not in done_ids and not is_optional(i)),
+                (i for i in visible_items if i.pk not in done_ids and is_gate_candidate(i)),
                 None,
             )
             prev_gate = _last_gate_item.get(session.pk, -1)
@@ -428,7 +436,11 @@ def plugin_state(request):
 
                     # For each unchecked optional before this item: check its own
                     # rule first — if it fires, auto-check it; otherwise skip it.
+                    # RequireAllVisible mode never skips: the gate already stops at
+                    # the first not-done item, so there is nothing to resolve here.
                     for candidate in visible_items:
+                        if require_all:
+                            break
                         if candidate.step >= item.step:
                             break
                         if candidate.pk in done_ids:

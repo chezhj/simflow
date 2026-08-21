@@ -209,9 +209,13 @@ def poll_view(request):
             def _is_optional(item):
                 return any(a.pk == _OPTIONAL_ATTR for a in item.attributes.all())
 
+            # RequireAllVisible mode: the gate covers every visible item, so an
+            # unchecked optional gates the warn window just like a required item.
+            _require_all = session.require_all_visible
+
             _poll_gate_step = None
             for item in _poll_visible_items:
-                if item.pk not in _poll_done_ids and not _is_optional(item):
+                if item.pk not in _poll_done_ids and (_require_all or not _is_optional(item)):
                     _poll_gate_step = item.step
                     break
 

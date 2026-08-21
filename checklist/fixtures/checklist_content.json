@@ -613,6 +613,23 @@
     }
   },
   {
+    "model": "checklist.attribute",
+    "pk": 19,
+    "fields": {
+      "title": "RequireAllVisible",
+      "label": "Check every visible item",
+      "order": 10,
+      "description": "Require every visible item to be checked — optional items are no longer auto-skipped, and informational items still auto-confirm in sequence",
+      "show": true,
+      "is_user_preference": true,
+      "over_ruled_by": null,
+      "btn_color": "#1D5E8E",
+      "live_rule": null,
+      "live_rule_mode": null,
+      "prompt_message": ""
+    }
+  },
+  {
     "model": "checklist.checkitem",
     "pk": 1,
     "fields": {

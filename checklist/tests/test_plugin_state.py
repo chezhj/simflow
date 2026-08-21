@@ -506,3 +506,63 @@ class TestPluginStateWarnItems(_Base):
         checked = resp.json()["checked"]
         self.assertNotIn(warn_item.pk, checked)
         self.assertNotIn(subsequent.pk, checked)
+
+
+class TestPluginStateRequireAllVisible(_Base):
+    """
+    Flow-mode preference (FlightSession.require_all_visible).
+
+    Layout for every test: an OPTIONAL item at step 1 (attr 4, fires only when
+    parking brake is OFF) followed by a REQUIRED item at step 2 (fires when the
+    brake is ON). The two modes disagree on what happens to the optional.
+    """
+
+    def setUp(self):
+        super().setUp()
+        # _OPTIONAL_ATTR is hard-coded as pk 4 in plugin_views.
+        self.optional_attr = Attribute.objects.create(pk=4, title="Optional", order=1)
+        FlightSessionAttribute.objects.create(
+            flight_session=self.session, attribute=self.optional_attr, is_active=True
+        )
+        self.opt_item = CheckItemFactory(
+            procedure=self.procedure, step=1,
+            attributes=[self.optional_attr], auto_check_rule=RULE_PARKING_BRAKE_OFF,
+        )
+        self.req_item = CheckItemFactory(
+            procedure=self.procedure, step=2, auto_check_rule=RULE_PARKING_BRAKE_ON,
+        )
+
+    def test_default_mode_auto_skips_optional_when_required_fires(self):
+        # brake ON → required (step 2) fires; optional (step 1) rule fails → skipped.
+        datarefs = {RULE_PARKING_BRAKE_ON["dataref"]: 1}
+        resp = _post(self.client, self._valid_body(datarefs=datarefs), key=self.raw_key).json()
+        self.assertIn(self.req_item.pk, resp["checked"])
+        self.assertIn(self.opt_item.pk, resp["skipped"])
+
+    def test_require_all_optional_gates_and_is_not_skipped(self):
+        self.session.require_all_visible = True
+        self.session.save(update_fields=["require_all_visible"])
+        # brake ON → optional's own rule (brake OFF) fails. The optional is now the
+        # gate, so nothing is skipped and the required item stays blocked behind it.
+        datarefs = {RULE_PARKING_BRAKE_ON["dataref"]: 1}
+        resp = _post(self.client, self._valid_body(datarefs=datarefs), key=self.raw_key).json()
+        self.assertNotIn(self.opt_item.pk, resp["checked"])
+        self.assertNotIn(self.opt_item.pk, resp["skipped"])
+        self.assertNotIn(self.req_item.pk, resp["checked"])
+        # And nothing was persisted as skipped either.
+        self.assertFalse(
+            FlightItemState.objects.filter(
+                flight_session=self.session, status="skipped"
+            ).exists()
+        )
+
+    def test_require_all_optional_auto_checks_when_its_own_rule_fires(self):
+        self.session.require_all_visible = True
+        self.session.save(update_fields=["require_all_visible"])
+        # brake OFF → the optional gate's own rule fires: it is auto-checked (not
+        # skipped). The required item is still behind the gate this poll.
+        datarefs = {RULE_PARKING_BRAKE_ON["dataref"]: 0}
+        resp = _post(self.client, self._valid_body(datarefs=datarefs), key=self.raw_key).json()
+        self.assertIn(self.opt_item.pk, resp["checked"])
+        self.assertNotIn(self.opt_item.pk, resp["skipped"])
+        self.assertNotIn(self.req_item.pk, resp["checked"])
