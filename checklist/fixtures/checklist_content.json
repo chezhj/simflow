@@ -4892,7 +4892,20 @@
       "action_label": "",
       "dataref_expression": "",
       "role": "BOTH",
-      "auto_check_rule": null,
+      "auto_check_rule": {
+        "all": [
+          {
+            "dataref": "laminar/B738/nd/fix_dist_00_00",
+            "op": "gt",
+            "value": 0
+          },
+          {
+            "dataref": "laminar/B738/nd/fix_dist_00_01",
+            "op": "gt",
+            "value": 0
+          }
+        ]
+      },
       "attributes": [
         4
       ]
@@ -7411,11 +7424,6 @@
             "dataref": "sim/flightmodel/position/indicated_airspeed",
             "op": "gt",
             "value": 40
-          },
-          {
-            "dataref": "sim/cockpit2/controls/speedbrake_ratio",
-            "op": "gt",
-            "value": 0
           }
         ]
       },
@@ -7463,6 +7471,11 @@
             "dataref": "sim/cockpit2/gauges/indicators/altitude_ft_pilot",
             "op": "lt",
             "value": 10500
+          },
+                    {
+            "dataref": "sim/cockpit2/gauges/indicators/altitude_ft_pilot",
+            "op": "gt",
+            "value": 8500
           },
           {
             "dataref": "sim/flightmodel/position/y_agl",
@@ -7736,7 +7749,7 @@
       "auto_check_rule": {
         "all": [
           {
-            "dataref": "laminar/B738/FMS/approach_speed",
+            "dataref": "laminar/B738/FMS/vref",
             "op": "gt",
             "value": 0
           },
@@ -8282,7 +8295,20 @@
       "action_label": "SET",
       "dataref_expression": "",
       "role": "PM",
-      "auto_check_rule": null,
+      "auto_check_rule": {
+        "all": [
+          {
+            "dataref": "sim/cockpit2/switches/generic_lights_switch[2]",
+            "op": "eq",
+            "value": 1
+          },
+          {
+            "dataref": "sim/cockpit2/switches/generic_lights_switch[3]",
+            "op": "eq",
+            "value": 1
+          }
+        ]
+      },
       "attributes": []
     }
   },
