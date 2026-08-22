@@ -1,6 +1,6 @@
 [project]
 name = "smarttrainingchecklist"
-version = "2.3.1"
+version = "2.4.0"
 description = "Webapplication to assist flight procedure"
 authors = [
     {name = "Hendrik-Jan",email = "h@vdwaal.net"}

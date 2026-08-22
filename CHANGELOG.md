@@ -1,3 +1,13 @@
+## v2.4.0 (2026-08-22)
+
+### Feat
+
+- **flow**: optional "require all visible items" gate mode (no auto-skip)
+
+### Fix
+
+- **poll**: use server-clock cursor so between-poll checks aren't dropped
+
 ## v2.3.1 (2026-08-12)
 
 ### Fix
