@@ -1,3 +1,13 @@
+## v2.5.0 (2026-08-23)
+
+### Feat
+
+- **content**: auto-check chocks and gate Precruise on level/climbing flight
+
+### Fix
+
+- **content**: tune auto-check and show rules for approach/landing items
+
 ## v2.4.0 (2026-08-22)
 
 ### Feat
