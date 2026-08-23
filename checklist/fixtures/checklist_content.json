@@ -3526,6 +3526,27 @@
   },
   {
     "model": "checklist.checkitem",
+    "pk": 392,
+    "fields": {
+      "item": "Chocks",
+      "procedure": 4,
+      "step": 136,
+      "setting": "Removed",
+      "action_label": "CHECKED",
+      "dataref_expression": "",
+      "role": "BOTH",
+      "auto_check_rule": {
+        "dataref": "laminar/B738/fms/chock_status",
+        "op": "eq",
+        "value": 0
+      },
+      "attributes": [
+        11
+      ]
+    }
+  },
+  {
+    "model": "checklist.checkitem",
     "pk": 130,
     "fields": {
       "item": "Doors",
@@ -3612,7 +3633,11 @@
       "action_label": "CHECKED",
       "dataref_expression": "",
       "role": "FO",
-      "auto_check_rule": null,
+      "auto_check_rule": {
+        "dataref": "laminar/B738/fms/chock_status",
+        "op": "eq",
+        "value": 1
+      },
       "attributes": [
         3
       ]
@@ -7328,6 +7353,11 @@
             "value": 9500
           },
           {
+            "dataref": "sim/flightmodel/position/vh_ind_fpm",
+            "op": "gt",
+            "value": -200
+          },
+          {
             "any": [
               {
                 "dataref": "laminar/B738/switch/land_lights_left_pos",
@@ -8505,7 +8535,11 @@
       "action_label": "DONE",
       "dataref_expression": "",
       "role": "PM",
-      "auto_check_rule": null,
+      "auto_check_rule": {
+        "dataref": "laminar/B738/fms/chock_status",
+        "op": "eq",
+        "value": 1
+      },
       "attributes": [
         4
       ]
