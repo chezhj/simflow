@@ -1,3 +1,9 @@
+## v2.5.1 (2026-09-04)
+
+### Fix
+
+- **content**: resolve DualPilot once at session start so solo flights hide dual-only items
+
 ## v2.5.0 (2026-08-23)
 
 ### Feat
