@@ -5,9 +5,9 @@
     "fields": {
       "name": "Boeing 737-800",
       "icao_code": "B738",
-      "content_version": "1.3.0",
-      "release_notes": "- Chocks (set) items now auto-check from chock_status\n- New mandatory \"Chocks Removed\" item (No Pushback flow only), auto-checked\n- Precruise Procedure no longer triggers while descending through 9500 ft",
-      "updated_at": "2026-08-23T09:28:20.069493Z"
+      "content_version": "1.3.1",
+      "release_notes": "- Fixed: dual-pilot-only items (e.g. \"Call Engine Start\") no longer appear or block auto-check in single-pilot flights",
+      "updated_at": "2026-09-04T00:00:00Z"
     }
   },
   {
@@ -187,6 +187,11 @@
           },
           {
             "dataref": "laminar/b738/fmodpack/flightphase_landed",
+            "op": "eq",
+            "value": 0
+          },
+          {
+            "dataref": "laminar/B738/autobrake/autobrake_pos",
             "op": "eq",
             "value": 0
           }
@@ -563,15 +568,32 @@
   },
   {
     "model": "checklist.attribute",
+    "pk": 20,
+    "fields": {
+      "title": "SoloPilot",
+      "label": "",
+      "order": 998,
+      "description": "Active in single-pilot flights. Suppresses DualPilot so PF/PM-only items stay hidden. Derived from the crew-mode choice, not shown as a picker option.",
+      "show": true,
+      "is_user_preference": false,
+      "over_ruled_by": null,
+      "btn_color": "#444444",
+      "live_rule": null,
+      "live_rule_mode": null,
+      "prompt_message": ""
+    }
+  },
+  {
+    "model": "checklist.attribute",
     "pk": 16,
     "fields": {
       "title": "DualPilot",
       "label": "",
       "order": 999,
-      "description": "Active when dual-pilot (PF/PM) mode is enabled. Items tagged with this attribute are hidden in solo mode.",
+      "description": "Active when dual-pilot (PF/PM) mode is enabled. Items tagged with this attribute are hidden in solo mode. Suppressed by SoloPilot (over_ruled_by) so it stays off in single-pilot flights.",
       "show": false,
       "is_user_preference": false,
-      "over_ruled_by": null,
+      "over_ruled_by": 20,
       "btn_color": "#444444",
       "live_rule": null,
       "live_rule_mode": null,
@@ -7397,6 +7419,11 @@
             "dataref": "sim/flightmodel/position/vh_ind_fpm",
             "op": "gt",
             "value": 200
+          },
+          {
+            "dataref": "laminar/b738/fmodpack/played_cruise_msg",
+            "op": "ne",
+          "value": 1
           }
         ]
       },

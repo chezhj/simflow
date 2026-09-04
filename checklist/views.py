@@ -335,6 +335,18 @@ def profile_view(request):
         else:
             pilot_role = "SOLO"
             pilot_function = "BOTH"
+            # Single-pilot: activate SoloPilot so _resolve_active_ids suppresses
+            # DualPilot (over_ruled_by) and PF/PM-only items stay hidden. This is
+            # the one place crew mode is translated into attribute state — every
+            # reader (browser + plugin) then trusts the stored FlightSessionAttribute
+            # set with no per-site DualPilot special-casing.
+            solo_id = (
+                Attribute.objects.filter(title="SoloPilot")
+                .values_list("id", flat=True)
+                .first()
+            )
+            if solo_id is not None and solo_id not in selected_ids:
+                selected_ids.append(solo_id)
 
         user_profile = None
         if request.user.is_authenticated:
@@ -433,9 +445,11 @@ def profile_view(request):
 
     ofp_derived_ids = set(request.session.get("sb_derived_attribs", []))
     # Conditions: flight-specific (not user preference); General: user preference defaults
+    # SoloPilot is show=True only so it acts as a DualPilot overruler (like the
+    # other overrulers); it is crew-derived, never a picker option, so hide it.
     conditions_attrs = Attribute.objects.filter(
         show=True, is_user_preference=False
-    ).order_by("order")
+    ).exclude(title="SoloPilot").order_by("order")
     general_attrs = Attribute.objects.filter(
         show=True, is_user_preference=True
     ).order_by("order")
@@ -690,16 +704,15 @@ def procedure_detail(request, slug=None, pk=None):
         flight_session.active_phase = procedure2view.slug
         flight_session.save(update_fields=["active_phase"])
 
+    # DualPilot state is resolved at session-creation time (SoloPilot overruler),
+    # so the stored FlightSessionAttribute set is authoritative here — no crew-mode
+    # adjustment. The plugin endpoints read the same stored set, keeping the gate
+    # the pilot's screen agree.
     active_attr_ids = list(
         FlightSessionAttribute.objects.filter(
             flight_session=flight_session, is_active=True
         ).values_list("attribute_id", flat=True)
     )
-    if flight_session.pilot_role != "SOLO":
-        if 16 not in active_attr_ids:
-            active_attr_ids.append(16)  # DualPilot — show dual-pilot-only items
-    elif 16 in active_attr_ids:
-        active_attr_ids.remove(16)  # strip DualPilot if wrongly stored for SOLO session
 
     allitems = procedure2view.checkitem_set.prefetch_related("attributes")
 

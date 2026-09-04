@@ -18,6 +18,7 @@ from checklist.tests.testFactories import (
 from checklist.tests.ViewTestCase import ViewTestCase
 from checklist.views import (
     IndexView,
+    _resolve_active_ids,
     idle_view,
     procedure_detail,
     profile_view,
@@ -624,9 +625,10 @@ class TestProcedureDetailView(ViewTestCase):
         session.refresh_from_db()
         self.assertEqual(session.active_phase, item_low.procedure.slug)
 
-    def test_dualpilot_item_hidden_in_solo_mode(self):
-        # The view strips attribute pk=16 (DualPilot) from active_attr_ids for SOLO sessions,
-        # so items that require it are filtered out.
+    def test_dualpilot_item_hidden_when_attr_inactive(self):
+        # procedure_detail now trusts the stored FlightSessionAttribute set: a
+        # [optional + DualPilot] item is hidden whenever DualPilot(16) is inactive
+        # (which is how a SOLO session is resolved — see the _resolve_active_ids tests).
         dualpilot_attr = Attribute.objects.create(id=16, title="DualPilot", order=999, show=False)
         optional_attr = AttributeFactory()
         check_item = CheckItemFactory(attributes=[optional_attr, dualpilot_attr])
@@ -639,7 +641,7 @@ class TestProcedureDetailView(ViewTestCase):
             flight_session=session, attribute=optional_attr, is_active=True
         )
         FlightSessionAttribute.objects.create(
-            flight_session=session, attribute=dualpilot_attr, is_active=True
+            flight_session=session, attribute=dualpilot_attr, is_active=False
         )
         request.session["flight_session_key"] = session.session_key
         request.session.save()
@@ -648,7 +650,9 @@ class TestProcedureDetailView(ViewTestCase):
         # Only the mandatory item shows; the [optional+DualPilot] item is hidden
         self.assertEqual(len(response.context_data["check_items"]), 1)
 
-    def test_dualpilot_item_visible_in_dual_mode(self):
+    def test_dualpilot_item_visible_when_attr_active(self):
+        # When DualPilot(16) is stored active (a dual-crew session), the item shows.
+        # No pilot_role special-casing — the stored set is authoritative.
         dualpilot_attr = Attribute.objects.create(id=16, title="DualPilot", order=999, show=False)
         optional_attr = AttributeFactory()
         check_item = CheckItemFactory(attributes=[optional_attr, dualpilot_attr])
@@ -659,7 +663,7 @@ class TestProcedureDetailView(ViewTestCase):
             flight_session=session, attribute=optional_attr, is_active=True
         )
         FlightSessionAttribute.objects.create(
-            flight_session=session, attribute=dualpilot_attr, is_active=False
+            flight_session=session, attribute=dualpilot_attr, is_active=True
         )
         request.session["flight_session_key"] = session.session_key
         request.session.save()
@@ -994,3 +998,31 @@ class TestProcedureReset(ViewTestCase):
         flight.refresh_from_db()
         self.assertEqual(flight.active_phase, proc.slug)
         proc.delete()
+
+
+class TestDualPilotResolution(TestCase):
+    """DualPilot(16) activation is resolved once, via the SoloPilot overruler.
+
+    These lock the data-model contract: SoloPilot present in the selection
+    (single-pilot) suppresses DualPilot's auto-activation; absent (dual crew)
+    lets it auto-activate. Every reader — browser and plugin — trusts that
+    resolved set, so no per-site DualPilot handling exists anywhere.
+    """
+
+    def setUp(self):
+        # SoloPilot is the show=True overruler; DualPilot is the show=False
+        # invisible default suppressed by it — mirroring the fixture.
+        self.solo = Attribute.objects.create(id=20, title="SoloPilot", order=998, show=True)
+        self.dual = Attribute.objects.create(
+            id=16, title="DualPilot", order=999, show=False, over_ruled_by=self.solo
+        )
+
+    def test_solopilot_selected_suppresses_dualpilot(self):
+        active = _resolve_active_ids(selected_attr_ids=[self.solo.id], ofp_attr_ids=set())
+        self.assertIn(self.solo.id, active)
+        self.assertNotIn(self.dual.id, active)
+
+    def test_dualpilot_autoactivates_without_solopilot(self):
+        active = _resolve_active_ids(selected_attr_ids=[], ofp_attr_ids=set())
+        self.assertNotIn(self.solo.id, active)
+        self.assertIn(self.dual.id, active)
