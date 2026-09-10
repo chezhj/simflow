@@ -201,11 +201,15 @@
         + '<path d="M1 3.5L4 6.5L10 1" stroke="white" stroke-width="1.8"'
         + ' stroke-linecap="round" stroke-linejoin="round"/></svg>';
 
+    /* Warn rows are excluded from every counter. They are not checklist steps,
+       so they must stay out of the denominator AND the numerator — counting a
+       checked warn row in checkedCount alone pushed it past totalItems and
+       wedged the completion test for the rest of the procedure. */
     var totalItems       = document.querySelectorAll('.ci:not([data-warn])').length;
-    var checkedCount     = document.querySelectorAll('.ci-manual, .ci-auto, .ci-skipped').length;
-    var autoCount        = document.querySelectorAll('.ci-auto').length;
-    var manualCount      = document.querySelectorAll('.ci-manual').length;
-    var skippedCount     = document.querySelectorAll('.ci-skipped').length;
+    var checkedCount     = document.querySelectorAll('.ci-manual:not([data-warn]), .ci-auto:not([data-warn]), .ci-skipped:not([data-warn])').length;
+    var autoCount        = document.querySelectorAll('.ci-auto:not([data-warn])').length;
+    var manualCount      = document.querySelectorAll('.ci-manual:not([data-warn])').length;
+    var skippedCount     = document.querySelectorAll('.ci-skipped:not([data-warn])').length;
     var hasCheckedThisVisit        = false; /* true only after an item is checked this visit */
     var autoContinue            = {{ procedure.auto_continue|lower }};
     var isConditionalProcedure  = {% if procedure.show_rule %}true{% else %}false{% endif %};
@@ -245,24 +249,6 @@
         var labelEl = document.getElementById('label-completed');
         if (labelEl) labelEl.classList.toggle('js-hidden', checkedCount === 0);
 
-        /* Auto-advance when all items are checked this visit and no warn row is
-           actively blocking (visible = rule is currently failing).
-           autoContinue controls destination only: True → nextproc, False → idle. */
-        var visibleWarnCount = document.querySelectorAll('.ci-warn:not(.js-hidden)').length;
-        if (hasCheckedThisVisit && checkedCount === totalItems && totalItems > 0 && visibleWarnCount === 0) {
-            setTimeout(function () {
-                {% if nextproc %}
-                if (autoContinue) {
-                    window.location.href = '{% url "checklist:detail" nextproc.slug %}';
-                } else {
-                    window.location.href = '{% url "checklist:idle" %}';
-                }
-                {% else %}
-                window.location.href = '{% url "checklist:idle" %}';
-                {% endif %}
-            }, 600);
-        }
-
         /* Conditional procedures stay visible in the nav (always reachable). When
            complete, they mark as done; the server's edge detection stops listing
            them in show_procedures so the suggested highlight clears on next poll. */
@@ -271,6 +257,54 @@
             if (selfNav) selfNav.classList.add('done');
         }
     }
+
+    /* ── Auto-advance ──────────────────────────────────────────────────────
+       Never armed from updateProgress(): that runs inside markItem(), which the
+       poll loop calls BEFORE it reveals warn rows, so the old check saw a view
+       one poll out of date, armed the 600 ms navigate, and nothing cancelled it
+       when the warn row appeared a few lines later. The procedure then left
+       "Engine stable / Starter cutoff" unchecked with the starter still at GRD.
+
+       A warn row blocks until it is resolved — the server reported it done, or
+       the pilot tapped it. Whether it happens to be on screen this instant is
+       not the question: an unresolved warn item is an unfinished safety step.
+       autoContinue controls destination only: True → nextproc, False → idle. */
+    var advanceTimer   = null;
+    var simUnavailable = false;   /* no live datarefs → warn rules can never resolve */
+
+    function autoAdvanceReady() {
+        if (!hasCheckedThisVisit || totalItems === 0) return false;
+        if (checkedCount !== totalItems) return false;
+        /* Manual-only / sim lost: a warn rule has nothing to evaluate against, so
+           holding the procedure open forever would strand the pilot. */
+        if (simUnavailable) return true;
+        return document.querySelectorAll('.ci-warn:not([data-warn-resolved])').length === 0;
+    }
+
+    function maybeAutoAdvance() {
+        if (!autoAdvanceReady()) {
+            /* Conditions lapsed (a warn row surfaced) — stand any pending nav down. */
+            if (advanceTimer !== null) { clearTimeout(advanceTimer); advanceTimer = null; }
+            return;
+        }
+        if (advanceTimer !== null) return;   /* already counting down */
+        advanceTimer = setTimeout(function () {
+            {% if nextproc %}
+            if (autoContinue) {
+                window.location.href = '{% url "checklist:detail" nextproc.slug %}';
+            } else {
+                window.location.href = '{% url "checklist:idle" %}';
+            }
+            {% else %}
+            window.location.href = '{% url "checklist:idle" %}';
+            {% endif %}
+        }, 600);
+    }
+
+    /* A warn row already checked server-side is rendered with its checked class;
+       it starts resolved so it does not block on arrival. */
+    document.querySelectorAll('.ci-warn.ci-manual, .ci-warn.ci-auto, .ci-warn.ci-skipped')
+        .forEach(function (row) { row.dataset.warnResolved = '1'; });
 
     /* ── CSRF token helper ── */
     function getCsrf() {
@@ -283,12 +317,33 @@
         var box    = row.querySelector('.check-box');
         var itemId = parseInt(row.dataset.itemId, 10);
 
+        /* Warn rows sit outside the progress counts, so tapping one resolves and
+           hides it rather than incrementing checkedCount. */
+        if (row.dataset.warn) {
+            if (row.dataset.warnResolved) return;
+            row.dataset.warnResolved = '1';
+            row.classList.add('js-hidden');
+            updateProgress();
+            maybeAutoAdvance();
+            fetch('/api/check/', {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json', 'X-CSRFToken': getCsrf()},
+                body: JSON.stringify({check_item_id: itemId})
+            }).catch(function () {
+                delete row.dataset.warnResolved;
+                row.classList.remove('js-hidden');
+                updateProgress();
+            });
+            return;
+        }
+
         if (row.classList.contains('ci-manual')) {
             row.classList.remove('ci-manual');
             box.innerHTML = '';
             checkedCount = Math.max(0, checkedCount - 1);
             manualCount  = Math.max(0, manualCount  - 1);
             updateProgress();
+            maybeAutoAdvance();
             fetch('/api/uncheck/', {
                 method: 'POST',
                 headers: {'Content-Type': 'application/json', 'X-CSRFToken': getCsrf()},
@@ -307,6 +362,7 @@
             manualCount  += 1;
             hasCheckedThisVisit = true;
             updateProgress();
+            maybeAutoAdvance();
             scrollToFirstUncheckedAfter(row);
             fetch('/api/check/', {
                 method: 'POST',
@@ -556,8 +612,10 @@
         var row = document.querySelector('[data-item-id="' + id + '"]');
         if (!row) return;
 
-        /* Warn items are not checklist steps — just hide them when their rule passes */
+        /* Warn items are not checklist steps — the server reporting one as done
+           resolves it (so it stops blocking auto-advance) and hides it. */
         if (row.dataset.warn) {
+            row.dataset.warnResolved = '1';
             row.classList.add('js-hidden');
             updateProgress();
             return;
@@ -784,6 +842,11 @@
                 row.classList.toggle('js-hidden', !activeWarnIds.has(id) || simLost);
             });
             updateProgress();
+
+            /* Only now, with checked_items applied and warn rows settled, is the
+               view current enough to decide whether the procedure is finished. */
+            simUnavailable = !data.sim_connected && (data.last_seen === 0 || simLost);
+            maybeAutoAdvance();
 
             /* Every procedure is always reachable in the nav now; show_procedures
                only drives the suggested highlight + banner (no auto-nav here). */
