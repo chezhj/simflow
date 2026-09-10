@@ -741,17 +741,32 @@
     /* ── Polling loop ── */
     var POLL_INTERVAL = {{ poll_interval_ms }};
     var lastPoll = 0;
+    var pollSeq = 0;      /* id of the most recently issued request */
+    var appliedSeq = 0;   /* id of the newest response already applied */
 
     async function pollChecklist() {
+        var seq = ++pollSeq;
         try {
-            var res = await fetch('/api/poll/?procedure={{ procedure.slug }}&since=' + lastPoll);
+            var res = await fetch('/api/poll/?procedure={{ procedure.slug }}&since=' + lastPoll,
+                                  {cache: 'no-store'});
             var data = await res.json();
-            /* Advance the cursor with the server's own clock so a state committed
-               between polls can't slip under a browser-clock cursor and be
-               dropped forever. Fall back to the local clock only if absent. */
-            lastPoll = (typeof data.server_time === 'number')
+
+            /* Drop a response that lost the race. setInterval fires whether or not
+               the previous fetch has returned, so a slow reply can land after a
+               newer one; applying it would rewind the `since` cursor and re-apply a
+               stale active_warn_ids, flickering warn rows on and off. */
+            if (seq <= appliedSeq) return;
+            appliedSeq = seq;
+
+            /* Read the clock from the server's own timestamp: the cursor can't slip
+               under browser clock skew and drop a state committed between polls,
+               and the staleness thresholds below are measured against the same
+               clock as `last_seen` — a skewed browser clock would otherwise make
+               the sim look long gone and hide every warn row. */
+            var nowServer = (typeof data.server_time === 'number')
                 ? data.server_time
                 : Math.floor(Date.now() / 1000);
+            lastPoll = nowServer;
 
             data.checked_items.forEach(function (item) { markItem(item.id, item.source); });
 
@@ -763,7 +778,7 @@
                5 s sim_connected flag — one late packet would otherwise hide every
                warn row and the next poll would re-show them, shifting the list. */
             var simLost = !data.sim_connected && data.last_seen > 0 &&
-                          (Date.now() / 1000 - data.last_seen) >= 30;
+                          (nowServer - data.last_seen) >= 30;
             document.querySelectorAll('.ci-warn[data-item-id]').forEach(function (row) {
                 var id = parseInt(row.dataset.itemId, 10);
                 row.classList.toggle('js-hidden', !activeWarnIds.has(id) || simLost);
@@ -776,7 +791,7 @@
             if (data.debug_rules !== undefined) { renderDebugRules(data.debug_rules, data.debug_attributes || [], data.debug_show_procedures || []); }
 
             /* Derive 5-state badge: connected / reconnecting / initializing / disconnected / manual */
-            var age          = data.last_seen > 0 ? (Date.now() / 1000 - data.last_seen) : Infinity;
+            var age          = data.last_seen > 0 ? (nowServer - data.last_seen) : Infinity;
             var reconnecting = !data.sim_connected && data.last_seen > 0 && age < 30;
             var disconnected = !data.sim_connected && data.last_seen > 0 && age >= 30;
             updateConnectionBadge(data.sim_connected, null, reconnecting, data.sim_initializing, disconnected);

@@ -99,8 +99,8 @@ def poll_view(request):
     # continuously True and items are still incomplete (pilot is mid-checklist).
     # Once all items are done and no new rising edge occurs, the procedure is
     # silently dropped — no loop, no auto-reset.
-    from .plugin_views import _last_datarefs
-    last_state = _last_datarefs.get(session.pk, {})
+    from .plugin_views import get_datarefs
+    last_state = get_datarefs(session)
 
     active_attr_ids_for_show = list(
         FlightSessionAttribute.objects.filter(
@@ -436,13 +436,13 @@ def attribute_transition_view(request):
     Attributes already in session.pilot_overrides are skipped (pilot decided
     this session). Attributes without live_rule or live_rule_mode are ignored.
     """
-    from .plugin_views import _last_datarefs  # in-process cache, no DB round-trip
+    from .plugin_views import get_datarefs
 
     session = _get_flight_session(request)
     if session is None:
         return JsonResponse({"applied": [], "prompts": []})
 
-    datarefs = _last_datarefs.get(session.pk, {})
+    datarefs = get_datarefs(session)
     overrides = session.pilot_overrides  # {str(attr_id): bool}
 
     applied = []

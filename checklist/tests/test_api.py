@@ -9,7 +9,7 @@ from datetime import datetime, timedelta, timezone
 from django.test import TestCase
 from django.urls import reverse
 
-from checklist.models import CheckItem, FlightItemState, FlightSession, Procedure, SOP
+from checklist.models import Attribute, CheckItem, FlightItemState, FlightSession, Procedure, SOP
 from checklist.tests.testFactories import CheckItemFactory, SOPFactory
 
 
@@ -24,6 +24,11 @@ def _post_json(client, url, data, session_key=None):
         data=json.dumps(data),
         content_type="application/json",
     )
+
+
+def _set_datarefs(session, datarefs):
+    """Helper: persist a dataref snapshot the way plugin_state does."""
+    FlightSession.objects.filter(pk=session.pk).update(last_datarefs=datarefs)
 
 
 def _set_session_key(client, session_key):
@@ -185,41 +190,38 @@ class TestPollView(TestCase):
         self.assertEqual(data["show_procedures"], [])
 
     def test_poll_show_procedures_contains_slug_when_rule_fires(self):
-        from checklist.plugin_views import _last_datarefs
         cond_proc = Procedure.objects.create(
             title="Go Around", step=99, slug="go-around-test",
             show_rule={"dataref": "sim/test/go_around", "op": "eq", "value": 1},
             sop=self.sop,
         )
-        _last_datarefs[self.session.pk] = {"sim/test/go_around": 1}
+        _set_datarefs(self.session, {"sim/test/go_around": 1})
         _set_session_key(self.client, self.session.session_key)
         try:
             data = _get_poll(self.client).json()
             self.assertIn(cond_proc.slug, data["show_procedures"])
         finally:
-            _last_datarefs.pop(self.session.pk, None)
+            pass
             cond_proc.delete()
 
     def test_poll_show_procedures_excludes_slug_when_rule_false(self):
-        from checklist.plugin_views import _last_datarefs
         cond_proc = Procedure.objects.create(
             title="Go Around", step=99, slug="go-around-test2",
             show_rule={"dataref": "sim/test/go_around", "op": "eq", "value": 1},
             sop=self.sop,
         )
-        _last_datarefs[self.session.pk] = {"sim/test/go_around": 0}
+        _set_datarefs(self.session, {"sim/test/go_around": 0})
         _set_session_key(self.client, self.session.session_key)
         try:
             data = _get_poll(self.client).json()
             self.assertNotIn(cond_proc.slug, data["show_procedures"])
         finally:
-            _last_datarefs.pop(self.session.pk, None)
+            pass
             cond_proc.delete()
 
     def test_poll_rising_edge_clears_states_and_shows_slug(self):
         """First time the rule fires (rising edge: prev=False → current=True), states are
         cleared and slug added to show_procedures regardless of existing state."""
-        from checklist.plugin_views import _last_datarefs
         cond_proc = Procedure.objects.create(
             title="Waypoint", step=98, slug="waypoint-test",
             show_rule={"dataref": "sim/test/wp", "op": "eq", "value": 1},
@@ -234,20 +236,19 @@ class TestPollView(TestCase):
             checked_at=datetime.now(tz=timezone.utc),
         )
         # show_rule_state starts as {} → prev = False → rising edge
-        _last_datarefs[self.session.pk] = {"sim/test/wp": 1}
+        _set_datarefs(self.session, {"sim/test/wp": 1})
         _set_session_key(self.client, self.session.session_key)
         try:
             data = _get_poll(self.client).json()
             self.assertIn(cond_proc.slug, data["show_procedures"])
             self.assertFalse(FlightItemState.objects.filter(pk=state.pk).exists())
         finally:
-            _last_datarefs.pop(self.session.pk, None)
+            pass
             cond_proc.delete()
 
     def test_poll_continuously_true_all_done_not_in_show_procedures(self):
         """When rule is continuously True (prev=True) and all items are done, procedure is
         silently skipped — no loop, no state deletion."""
-        from checklist.plugin_views import _last_datarefs
         cond_proc = Procedure.objects.create(
             title="Descent", step=97, slug="descent-edge-test",
             show_rule={"dataref": "sim/test/descend", "op": "eq", "value": 1},
@@ -264,7 +265,7 @@ class TestPollView(TestCase):
             source="manual",
             checked_at=datetime.now(tz=timezone.utc),
         )
-        _last_datarefs[self.session.pk] = {"sim/test/descend": 1}
+        _set_datarefs(self.session, {"sim/test/descend": 1})
         _set_session_key(self.client, self.session.session_key)
         try:
             data = _get_poll(self.client).json()
@@ -272,13 +273,12 @@ class TestPollView(TestCase):
             self.assertNotIn(cond_proc.slug, data["show_procedures"])
             self.assertTrue(FlightItemState.objects.filter(pk=state.pk).exists())
         finally:
-            _last_datarefs.pop(self.session.pk, None)
+            pass
             cond_proc.delete()
 
     def test_poll_continuously_true_items_incomplete_shows_slug(self):
         """When rule is continuously True and items are NOT all done, procedure stays in
         show_procedures so the pilot can return to it."""
-        from checklist.plugin_views import _last_datarefs
         cond_proc = Procedure.objects.create(
             title="Descent B", step=96, slug="descent-partial-test",
             show_rule={"dataref": "sim/test/descend2", "op": "eq", "value": 1},
@@ -288,19 +288,18 @@ class TestPollView(TestCase):
         # prev=True (already fired last poll)
         self.session.show_rule_state = {str(cond_proc.pk): True}
         self.session.save()
-        _last_datarefs[self.session.pk] = {"sim/test/descend2": 1}
+        _set_datarefs(self.session, {"sim/test/descend2": 1})
         _set_session_key(self.client, self.session.session_key)
         try:
             data = _get_poll(self.client).json()
             self.assertIn(cond_proc.slug, data["show_procedures"])
         finally:
-            _last_datarefs.pop(self.session.pk, None)
+            pass
             cond_proc.delete()
 
     def test_poll_false_rule_records_false_enabling_next_rising_edge(self):
         """When the rule is False, show_rule_state records False. The next poll where the
         rule is True will be treated as a rising edge."""
-        from checklist.plugin_views import _last_datarefs
         cond_proc = Procedure.objects.create(
             title="Descent C", step=95, slug="descent-retrigger-test",
             show_rule={"dataref": "sim/test/alt", "op": "eq", "value": 1},
@@ -310,7 +309,7 @@ class TestPollView(TestCase):
         self.session.show_rule_state = {str(cond_proc.pk): True}
         self.session.save()
 
-        _last_datarefs[self.session.pk] = {"sim/test/alt": 0}  # rule fires False
+        _set_datarefs(self.session, {"sim/test/alt": 0})  # rule fires False
         _set_session_key(self.client, self.session.session_key)
         try:
             # First poll: rule False — slug not in show_procedures, state saved as False
@@ -320,16 +319,15 @@ class TestPollView(TestCase):
             self.assertFalse(self.session.show_rule_state.get(str(cond_proc.pk), True))
 
             # Second poll: rule True — rising edge (False→True), slug shown
-            _last_datarefs[self.session.pk] = {"sim/test/alt": 1}
+            _set_datarefs(self.session, {"sim/test/alt": 1})
             data = _get_poll(self.client).json()
             self.assertIn(cond_proc.slug, data["show_procedures"])
         finally:
-            _last_datarefs.pop(self.session.pk, None)
+            pass
             cond_proc.delete()
 
     def test_poll_show_rule_state_saved_only_on_change(self):
         """show_rule_state is only persisted to DB when the result changes."""
-        from checklist.plugin_views import _last_datarefs
         cond_proc = Procedure.objects.create(
             title="Stable", step=94, slug="stable-rule-test",
             show_rule={"dataref": "sim/test/stable", "op": "eq", "value": 1},
@@ -340,7 +338,7 @@ class TestPollView(TestCase):
         self.session.save()
         original_updated = self.session.pk  # just to force a fresh load below
 
-        _last_datarefs[self.session.pk] = {"sim/test/stable": 1}  # still True
+        _set_datarefs(self.session, {"sim/test/stable": 1})  # still True
         _set_session_key(self.client, self.session.session_key)
         try:
             _get_poll(self.client)
@@ -348,7 +346,7 @@ class TestPollView(TestCase):
             # State should remain True (no write needed for same value)
             self.assertTrue(self.session.show_rule_state.get(str(cond_proc.pk)))
         finally:
-            _last_datarefs.pop(self.session.pk, None)
+            pass
             cond_proc.delete()
 
     def test_poll_always_returns_show_live_values_key(self):
@@ -356,6 +354,67 @@ class TestPollView(TestCase):
         data = _get_poll(self.client).json()
         self.assertIn("show_live_values", data)
         self.assertIsInstance(data["show_live_values"], list)
+
+
+class TestPollWarnRowsUseSharedSnapshot(TestCase):
+    """
+    Regression: the dataref snapshot must live on FlightSession, not in a
+    module-level dict.
+
+    Under Passenger the app runs in several worker processes and a plugin state
+    POST only reaches one of them. With a process-local cache, each poll was
+    answered from whichever worker served it, so a worker still holding a
+    pre-start snapshot evaluated "Starter cutoff" (starter_pos == 1 — also the
+    resting value of the switch) as already satisfied and dropped the item from
+    active_warn_ids, while the worker with fresh state kept it. Polls alternating
+    between workers made the green warn row flicker at the poll rate with the
+    start switch still at GRD.
+    """
+
+    STARTER = "laminar/B738/engine/starter2_pos"
+
+    def setUp(self):
+        self.sop = SOPFactory()
+        self.procedure = Procedure.objects.create(
+            title="Engine Start", step=1, slug="engine-start", sop=self.sop
+        )
+        # attr 3 (Informational) is the sole gate → item is a warn row
+        self.info_attr = Attribute.objects.create(title="NoActionNeed", order=1, pk=3)
+        self.item = CheckItemFactory(
+            procedure=self.procedure,
+            step=10,
+            auto_check_rule={"dataref": self.STARTER, "op": "eq", "value": 1},
+        )
+        self.item.attributes.add(self.info_attr)
+        self.session = FlightSession.objects.create()
+        _set_session_key(self.client, self.session.session_key)
+
+    def _warn_ids(self):
+        return _get_poll(self.client, procedure_slug="engine-start").json()["active_warn_ids"]
+
+    def test_snapshot_is_persisted_on_the_session_not_process_memory(self):
+        """A state POST must leave the snapshot readable by any other process."""
+        FlightSession.objects.filter(pk=self.session.pk).update(
+            last_datarefs={self.STARTER: 0}
+        )
+        # A fresh instance stands in for a different worker process.
+        other_worker_view = FlightSession.objects.get(pk=self.session.pk)
+        self.assertEqual(other_worker_view.last_datarefs, {self.STARTER: 0})
+
+    def test_warn_row_shown_while_starter_still_at_grd(self):
+        _set_datarefs(self.session, {self.STARTER: 0})  # switch held at GRD
+        self.assertIn(self.item.pk, self._warn_ids())
+
+    def test_warn_row_does_not_flicker_across_repeated_polls(self):
+        """Sim state unchanged → every poll must give the same answer."""
+        _set_datarefs(self.session, {self.STARTER: 0})
+        self.assertEqual([self._warn_ids() for _ in range(4)], [[self.item.pk]] * 4)
+
+    def test_warn_row_clears_only_once_starter_returns_to_auto(self):
+        _set_datarefs(self.session, {self.STARTER: 0})
+        self.assertIn(self.item.pk, self._warn_ids())
+        _set_datarefs(self.session, {self.STARTER: 1})  # sprung back to AUTO
+        self.assertNotIn(self.item.pk, self._warn_ids())
 
 
 class TestCheckView(TestCase):

@@ -286,16 +286,25 @@
     /* ── Polling loop ── */
     var POLL_INTERVAL = {{ poll_interval_ms }};
     var lastPoll = 0;
+    var pollSeq = 0;      /* id of the most recently issued request */
+    var appliedSeq = 0;   /* id of the newest response already applied */
 
     async function pollIdle() {
+        var seq = ++pollSeq;
         try {
-            var res  = await fetch('/api/poll/?since=' + lastPoll);
+            var res  = await fetch('/api/poll/?since=' + lastPoll, {cache: 'no-store'});
             var data = await res.json();
+
+            /* Ignore a reply overtaken by a newer one (see detail.html). */
+            if (seq <= appliedSeq) return;
+            appliedSeq = seq;
+
             /* Server-clock cursor (see detail.html) — avoids browser clock skew
                dropping a between-polls state update. */
             lastPoll = (typeof data.server_time === 'number')
                 ? data.server_time
                 : Math.floor(Date.now() / 1000);
+            var nowServer = lastPoll;
 
             applyShowProcedures(data.show_procedures || []);
             applyLiveValues(data.show_live_values || []);
@@ -303,7 +312,7 @@
                 renderDebugRules(data.debug_show_procedures || [], data.debug_attributes || []);
             }
 
-            var age          = data.last_seen > 0 ? (Date.now() / 1000 - data.last_seen) : Infinity;
+            var age          = data.last_seen > 0 ? (nowServer - data.last_seen) : Infinity;
             var reconnecting = !data.sim_connected && data.last_seen > 0 && age < 30;
             var disconnected = !data.sim_connected && data.last_seen > 0 && age >= 30;
             updateConnectionBadge(data.sim_connected, null, reconnecting, data.sim_initializing, disconnected);

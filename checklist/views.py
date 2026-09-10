@@ -573,7 +573,7 @@ def _apply_attribute_overrides(request):
     All decisions are merged into FlightSession.pilot_overrides for the duration
     of the session so the same attribute is never prompted again.
     """
-    from .plugin_views import _last_datarefs  # in-process cache
+    from .plugin_views import get_datarefs
 
     session_key = request.session.get("flight_session_key")
     if not session_key:
@@ -592,7 +592,7 @@ def _apply_attribute_overrides(request):
     if not isinstance(decisions, list):
         return JsonResponse({"status": "error", "detail": "decisions must be a list."}, status=400)
 
-    datarefs = _last_datarefs.get(flight_session.pk, {})
+    datarefs = get_datarefs(flight_session)
     overrides = dict(flight_session.pilot_overrides)
 
     for decision in decisions:
@@ -845,8 +845,8 @@ def idle_view(request):
     except FlightSession.DoesNotExist:
         return HttpResponseRedirect(reverse("checklist:start"))
 
-    from .plugin_views import _last_datarefs
-    last_state = _last_datarefs.get(flight_session.pk, {})
+    from .plugin_views import get_datarefs
+    last_state = get_datarefs(flight_session)
 
     idle_datarefs = IdleDataref.objects.all()
     live_values = []

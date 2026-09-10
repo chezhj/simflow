@@ -276,6 +276,16 @@ class FlightSession(models.Model):
         help_text="Last evaluated show_rule result per procedure: {str(proc.pk): bool}. "
                   "Used for rising-edge detection in poll_view.",
     )
+    last_datarefs = models.JSONField(
+        null=True,
+        blank=True,
+        default=None,
+        help_text="Latest dataref snapshot POSTed by the plugin. Stored here rather "
+                  "than in process memory because the app runs under Passenger with "
+                  "several worker processes — a plugin POST only reaches one worker, "
+                  "so a process-local cache makes every other worker evaluate rules "
+                  "against a stale snapshot.",
+    )
     require_all_visible = models.BooleanField(
         default=False,
         help_text="Snapshot of the RequireAllVisible preference at session start. "

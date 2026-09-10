@@ -56,10 +56,10 @@ class _Base(TestCase):
         )
 
     def _seed_datarefs(self, datarefs=None):
-        plugin_views._last_datarefs[self.session.pk] = datarefs or {}
+        FlightSession.objects.filter(pk=self.session.pk).update(last_datarefs=datarefs or {})
 
     def tearDown(self):
-        plugin_views._last_datarefs.pop(self.session.pk, None)
+        pass
 
 
 class TestReportMissAuth(_Base):
@@ -115,7 +115,7 @@ class TestReportMissValidation(_Base):
 
     def test_no_cached_datarefs_returns_422(self):
         CheckItemFactory(procedure=self.procedure, step=1)
-        # Do NOT seed _last_datarefs
+        # Do NOT seed last_datarefs — stays None, meaning "plugin never reported"
         resp = _post(self.client, {"session_id": self.session.pk}, key=self.raw_key)
         self.assertEqual(resp.status_code, 422)
         self.assertIn("detail", resp.json())

@@ -65,10 +65,18 @@ def _plugin_status(request) -> str:
         return "warn"
     return "ok"
 
-# Last dataref snapshot received per session (session_id → datarefs dict).
-# Updated on every plugin_state POST; read by plugin_check_next to provide
-# context for manual check events without changing the plugin protocol.
-_last_datarefs: dict[int, dict] = {}
+def get_datarefs(session) -> dict:
+    """
+    Latest dataref snapshot the plugin POSTed for this session.
+
+    Persisted on FlightSession rather than cached in module memory: the app runs
+    under Passenger with several worker processes, and a plugin state POST only
+    ever reaches one of them. A process-local cache therefore left every other
+    worker evaluating rules against a stale snapshot, so a poll's answer depended
+    on which worker served it — visible as warn rows flickering on and off at the
+    poll rate whenever a rule matched a value the stale snapshot still held.
+    """
+    return session.last_datarefs or {}
 
 # Last gate item pk per session — used to detect gate changes for logging.
 _last_gate_item: dict[int, int | None] = {}
@@ -183,7 +191,7 @@ def plugin_check_next(request):
         },
     )
 
-    last_state = _last_datarefs.get(session.pk, {})
+    last_state = get_datarefs(session)
     rule = next_item.auto_check_rule
     log_entry = {
         "ts": now.isoformat(),
@@ -325,10 +333,12 @@ def plugin_state(request):
         return JsonResponse({}, status=404)
 
     now = datetime.now(tz=timezone.utc)
-    FlightSession.objects.filter(pk=session.pk).update(last_plugin_contact=now)
-
-    # Cache the latest dataref snapshot for use by plugin_check_next logging.
-    _last_datarefs[session.pk] = datarefs
+    # Persist the snapshot alongside the contact stamp — one UPDATE, and every
+    # worker process then reads the same state (see get_datarefs).
+    FlightSession.objects.filter(pk=session.pk).update(
+        last_plugin_contact=now, last_datarefs=datarefs
+    )
+    session.last_datarefs = datarefs
 
     # Attribute ID that marks items as optional (non-blocking for the sequence gate).
     # Items WITHOUT this attribute are "required" and form the gate boundary.
@@ -605,12 +615,14 @@ def plugin_report_miss(request):
     if target_item is None:
         return JsonResponse({}, status=204)
 
-    datarefs = _last_datarefs.get(session.pk)
-    if datarefs is None:
+    # None means the plugin has never POSTed state for this session; an empty
+    # dict means it has, but reported nothing to watch.
+    if session.last_datarefs is None:
         return JsonResponse(
             {"detail": "No dataref state cached for this session."},
             status=422,
         )
+    datarefs = session.last_datarefs
 
     rule = target_item.auto_check_rule
     leaf_evals = collect_leaf_evaluations(rule, datarefs) if rule else []
