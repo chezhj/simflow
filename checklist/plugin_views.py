@@ -171,10 +171,19 @@ def plugin_check_next(request):
     )
 
     next_item = None
-    for item in CheckItem.objects.filter(procedure=procedure).order_by("step"):
+    for item in (
+        CheckItem.objects.filter(procedure=procedure)
+        .prefetch_related("attributes")
+        .order_by("step")
+    ):
         if item.pk in done_ids:
             continue
-        if item.shouldshow(active_attr_ids):
+        # Same visibility test the gate uses in plugin_state/poll_view. Warn items
+        # are hidden by the Informational opt-out but still block the sequence, so
+        # the button has to be able to check them. Matching on shouldshow() alone
+        # skipped straight past a blocking warn item and checked a later row
+        # instead, so the gate never moved and the press looked like a no-op.
+        if item.shouldshow(active_attr_ids) or item.should_warn(active_attr_ids):
             next_item = item
             break
 
@@ -607,8 +616,16 @@ def plugin_report_miss(request):
     )
 
     target_item = None
-    for item in CheckItem.objects.filter(procedure=procedure).order_by("step"):
-        if item.pk not in done_ids and item.shouldshow(active_attr_ids):
+    for item in (
+        CheckItem.objects.filter(procedure=procedure)
+        .prefetch_related("attributes")
+        .order_by("step")
+    ):
+        if item.pk in done_ids:
+            continue
+        # Must match the gate (see plugin_check_next): a blocking warn item is the
+        # item the pilot is stuck on, so it is the one worth diagnosing.
+        if item.shouldshow(active_attr_ids) or item.should_warn(active_attr_ids):
             target_item = item
             break
 

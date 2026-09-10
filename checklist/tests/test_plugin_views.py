@@ -277,3 +277,85 @@ class TestPluginCheckNextAttributeFiltering(TestCase):
                 status="checked",
             ).exists()
         )
+
+
+class TestPluginCheckNextWarnItems(TestCase):
+    """
+    Regression: the button must be able to check a blocking warn item.
+
+    Warn items (gated only by attr 3, Informational) are hidden by shouldshow()
+    but still gate the sequence in plugin_state/poll_view. check_next matched on
+    shouldshow() alone, so it skipped a blocking warn item and checked a later
+    row instead — the gate never advanced and pressing the button looked like it
+    did nothing. Most visible in RequireAllVisible mode, where the gate stops at
+    every visible row.
+    """
+
+    def setUp(self):
+        self.user = User.objects.create_user(username="pilot", password="pw")
+        self.profile = self.user.profile
+        raw, hashed, prefix = generate_api_key()
+        self.raw_key = raw
+        self.profile.api_key_hash = hashed
+        self.profile.api_key_prefix = prefix
+        self.profile.save()
+
+        self.sop = SOPFactory()
+        self.procedure = Procedure.objects.create(
+            title="Engine Start", step=1, slug="engine-start", sop=self.sop
+        )
+        # attr 3 is _INFO_ATTR; leaving it inactive makes the item a warn row
+        self.info_attr = Attribute.objects.create(title="NoActionNeed", order=1, pk=3)
+        self.session = FlightSession.objects.create(
+            user_profile=self.profile,
+            active_phase="engine-start",
+            is_active=True,
+            require_all_visible=True,
+        )
+
+    def _warn_item(self, step):
+        item = CheckItemFactory(
+            procedure=self.procedure,
+            step=step,
+            auto_check_rule={"dataref": "sim/test/starter", "op": "eq", "value": 1},
+        )
+        item.attributes.add(self.info_attr)
+        return item
+
+    def _checked_ids(self):
+        return set(
+            FlightItemState.objects.filter(
+                flight_session=self.session, status="checked"
+            ).values_list("checklist_item_id", flat=True)
+        )
+
+    def test_blocking_warn_item_is_checked_first(self):
+        warn_item = self._warn_item(step=1)
+        later_item = CheckItemFactory(procedure=self.procedure, step=2)
+
+        self.assertEqual(_post(self.client, self.raw_key).status_code, 200)
+
+        self.assertIn(warn_item.pk, self._checked_ids())
+        self.assertNotIn(later_item.pk, self._checked_ids())
+
+    def test_presses_walk_the_list_in_order_without_skipping(self):
+        warn_item = self._warn_item(step=1)
+        later_item = CheckItemFactory(procedure=self.procedure, step=2)
+
+        _post(self.client, self.raw_key)
+        _post(self.client, self.raw_key)
+
+        self.assertEqual(self._checked_ids(), {warn_item.pk, later_item.pk})
+        # Nothing left → phase complete
+        self.assertEqual(_post(self.client, self.raw_key).status_code, 204)
+
+    def test_item_gated_by_an_inactive_attribute_is_still_skipped(self):
+        """Only attr 3 makes an item a warn row; other gates still hide it."""
+        other = AttributeFactory()
+        hidden = CheckItemFactory(procedure=self.procedure, step=1, attributes=[other])
+        visible = CheckItemFactory(procedure=self.procedure, step=2)
+
+        _post(self.client, self.raw_key)
+
+        self.assertNotIn(hidden.pk, self._checked_ids())
+        self.assertIn(visible.pk, self._checked_ids())
