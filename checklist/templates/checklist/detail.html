@@ -318,11 +318,9 @@
     document.querySelectorAll('.ci-warn.ci-manual, .ci-warn.ci-auto, .ci-warn.ci-skipped')
         .forEach(function (row) { row.dataset.warnResolved = '1'; });
 
-    /* ── CSRF token helper ── */
-    function getCsrf() {
-        var el = document.querySelector('[name=csrfmiddlewaretoken]');
-        return el ? el.value : '';
-    }
+    /* Config + CSRF come from the shared module (see simflow-core.js). */
+    var CFG     = SimFlow.config();
+    var getCsrf = SimFlow.csrfToken;
 
     /* ── Persist a state change and adopt the phase state it returns ──
        The response carries the same phase_state the poll would, so a tap that
@@ -355,7 +353,7 @@
             row.dataset.warnResolved = '1';
             row.classList.add('js-hidden');
             updateProgress();
-            postCheck('/api/check/', itemId, function () {
+            postCheck(CFG.urls.check, itemId, function () {
                 delete row.dataset.warnResolved;
                 row.classList.remove('js-hidden');
                 updateProgress();
@@ -369,7 +367,7 @@
             checkedCount = Math.max(0, checkedCount - 1);
             manualCount  = Math.max(0, manualCount  - 1);
             updateProgress();
-            postCheck('/api/uncheck/', itemId, function () {
+            postCheck(CFG.urls.uncheck, itemId, function () {
                 row.classList.add('ci-manual');
                 box.innerHTML = TICK_SVG;
                 checkedCount += 1;
@@ -384,7 +382,7 @@
             hasCheckedThisVisit = true;
             updateProgress();
             scrollToFirstUncheckedAfter(row);
-            postCheck('/api/check/', itemId, function () {
+            postCheck(CFG.urls.check, itemId, function () {
                 row.classList.remove('ci-manual');
                 box.innerHTML = '';
                 checkedCount = Math.max(0, checkedCount - 1);
@@ -813,7 +811,7 @@
     }
 
     /* ── Polling loop ── */
-    var POLL_INTERVAL = {{ poll_interval_ms }};
+    var POLL_INTERVAL = CFG.pollIntervalMs;
     var lastPoll = 0;
     var pollSeq = 0;      /* id of the most recently issued request */
     var appliedSeq = 0;   /* id of the newest response already applied */
@@ -821,7 +819,7 @@
     async function pollChecklist() {
         var seq = ++pollSeq;
         try {
-            var res = await fetch('/api/poll/?procedure={{ procedure.slug }}&since=' + lastPoll,
+            var res = await fetch(CFG.urls.poll + '?procedure={{ procedure.slug }}&since=' + lastPoll,
                                   {cache: 'no-store'});
             var data = await res.json();
 
@@ -909,7 +907,7 @@
 
     async function navigateWithTransition(targetUrl) {
         try {
-            var res = await fetch('{% url "checklist:api_attribute_transition" %}', {
+            var res = await fetch(CFG.urls.attrTransition, {
                 headers: {'X-CSRFToken': getCsrf()}
             });
             var data = await res.json();

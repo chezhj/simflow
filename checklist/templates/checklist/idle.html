@@ -146,6 +146,8 @@
 
     /* Shared with detail.html — see static/checklist/simflow-core.js */
     var escHtml = SimFlow.escHtml;
+    var CFG     = SimFlow.config();
+    var getCsrf = SimFlow.csrfToken;
 
     /* ── Debug: show conditional-procedure rule state in the info panel ── */
     function renderDebugRules(showProcs, attrs) {
@@ -199,11 +201,6 @@
             }).join('');
         }
         list.innerHTML = html;
-    }
-
-    function getCsrf() {
-        var m = document.cookie.match(/csrftoken=([^;]+)/);
-        return m ? m[1] : '';
     }
 
     /* ── updateConnectionBadge ── */
@@ -282,7 +279,7 @@
     }
 
     /* ── Polling loop ── */
-    var POLL_INTERVAL = {{ poll_interval_ms }};
+    var POLL_INTERVAL = CFG.pollIntervalMs;
     var lastPoll = 0;
     var pollSeq = 0;      /* id of the most recently issued request */
     var appliedSeq = 0;   /* id of the newest response already applied */
@@ -290,7 +287,7 @@
     async function pollIdle() {
         var seq = ++pollSeq;
         try {
-            var res  = await fetch('/api/poll/?since=' + lastPoll, {cache: 'no-store'});
+            var res  = await fetch(CFG.urls.poll + '?since=' + lastPoll, {cache: 'no-store'});
             var data = await res.json();
 
             /* Ignore a reply overtaken by a newer one (see detail.html). */
@@ -367,7 +364,7 @@
     /* ── Attribute transition: intercept nav clicks ── */
     async function navigateWithTransition(targetUrl) {
         try {
-            var res  = await fetch('{% url "checklist:api_attribute_transition" %}', {
+            var res  = await fetch(CFG.urls.attrTransition, {
                 headers: {'X-CSRFToken': getCsrf()}
             });
             var data = await res.json();

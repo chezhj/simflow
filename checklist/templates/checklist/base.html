@@ -20,6 +20,25 @@
 </head>
 <body>
 
+    {% comment %}
+      Server-rendered configuration for the static JS. A static file cannot use
+      the url tag or reach the view context, so it arrives on data- attributes —
+      the same channel wakelock.js uses. Read via SimFlow.config().
+    {% endcomment %}
+    <div id="js-config" hidden
+         data-poll-interval-ms="{{ poll_interval_ms|default:1500 }}"
+         data-url-poll="{% url 'checklist:api_poll' %}"
+         data-url-check="{% url 'checklist:api_check' %}"
+         data-url-uncheck="{% url 'checklist:api_uncheck' %}"
+         data-url-attr-transition="{% url 'checklist:api_attribute_transition' %}"></div>
+
+    {% comment %}
+      Rendered on every page so SimFlow.csrfToken() can always use the input,
+      and so Django sets the csrftoken cookie regardless of entry point.
+      idle.html previously had neither and depended on the cookie alone.
+    {% endcomment %}
+    {% csrf_token %}
+
     <!-- ── Connection bar ──────────────────────────────────────────── -->
     <div class="conn-bar"
          data-route="{% if request.session.sb_origin %}{{ request.session.sb_origin }}{% if request.session.sb_destination %} → {{ request.session.sb_destination }}{% endif %}{% endif %}">

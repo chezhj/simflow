@@ -44,5 +44,80 @@
         return 'disconnected';
     }
 
-    return { escHtml: escHtml, connectionState: connectionState, RECONNECT_GRACE: RECONNECT_GRACE };
+    /** The document, or null under `node --test` where there isn't one. */
+    function defaultDoc(doc) {
+        if (doc) return doc;
+        return typeof document !== 'undefined' ? document : null;
+    }
+
+    /**
+     * Read the CSRF token out of a cookie header string.
+     *
+     * Kept separate from any DOM so it can be tested directly. Anchored on a
+     * boundary so a cookie merely *ending* in "csrftoken" cannot match.
+     */
+    function parseCsrfCookie(cookieString) {
+        var m = /(?:^|;\s*)csrftoken=([^;]*)/.exec(cookieString || '');
+        return m ? decodeURIComponent(m[1]) : '';
+    }
+
+    /**
+     * The CSRF token for this page: the rendered hidden input first, the cookie
+     * as fallback.
+     *
+     * The two pages used to do one each. detail.html read the input, which
+     * idle.html does not render, so idle.html read the cookie — which only
+     * works while CSRF_COOKIE_HTTPONLY is false. Hardening that setting would
+     * have broken one page and not the other. Trying both is correct on every
+     * page and under either setting.
+     */
+    function csrfToken(doc) {
+        doc = defaultDoc(doc);
+        if (!doc) return '';
+        var el = doc.querySelector('[name=csrfmiddlewaretoken]');
+        if (el && el.value) return el.value;
+        return parseCsrfCookie(doc.cookie);
+    }
+
+    // Fallback poll interval if the config element is missing or unparseable.
+    var DEFAULT_POLL_INTERVAL_MS = 1500;
+
+    /**
+     * Turn the #js-config element into a config object.
+     *
+     * Takes the element rather than looking it up, so it can be tested with a
+     * plain `{dataset: {...}}` stand-in. Server-rendered URLs reach static
+     * JavaScript this way because a static file cannot use {% url %} — the same
+     * data-attribute channel wakelock.js already uses.
+     */
+    function readConfig(el) {
+        var d = (el && el.dataset) || {};
+        var interval = parseInt(d.pollIntervalMs, 10);
+        return {
+            pollIntervalMs: interval > 0 ? interval : DEFAULT_POLL_INTERVAL_MS,
+            urls: {
+                poll:           d.urlPoll || '',
+                check:          d.urlCheck || '',
+                uncheck:        d.urlUncheck || '',
+                attrTransition: d.urlAttrTransition || '',
+            },
+        };
+    }
+
+    /** readConfig() against the live document. */
+    function config(doc) {
+        doc = defaultDoc(doc);
+        return readConfig(doc && doc.getElementById('js-config'));
+    }
+
+    return {
+        escHtml: escHtml,
+        connectionState: connectionState,
+        parseCsrfCookie: parseCsrfCookie,
+        csrfToken: csrfToken,
+        readConfig: readConfig,
+        config: config,
+        RECONNECT_GRACE: RECONNECT_GRACE,
+        DEFAULT_POLL_INTERVAL_MS: DEFAULT_POLL_INTERVAL_MS,
+    };
 }));
