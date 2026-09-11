@@ -29,6 +29,13 @@ from .models import (
     SOP,
     UserProfile,
 )
+from .phase import (
+    active_attribute_ids,
+    done_item_ids,
+    gate_item,
+    is_optional,
+    visible_items,
+)
 from .rules import collect_datarefs, collect_leaf_evaluations, evaluate_rule
 
 logger = logging.getLogger(__name__)
@@ -349,14 +356,10 @@ def plugin_state(request):
     )
     session.last_datarefs = datarefs
 
-    # Attribute ID that marks items as optional (non-blocking for the sequence gate).
-    # Items WITHOUT this attribute are "required" and form the gate boundary.
-    _OPTIONAL_ATTR = 4
-
     newly_checked = []
     newly_skipped = []
     watch = []
-    gate_item = None  # set inside the procedure block; used below for idle watch logic
+    gate_item_ = None  # set inside the procedure block; used below for idle watch logic
 
     if session.active_phase:
         try:
@@ -365,68 +368,38 @@ def plugin_state(request):
             procedure = None
 
         if procedure:
-            active_attr_ids = list(
-                FlightSessionAttribute.objects.filter(
-                    flight_session=session, is_active=True
-                ).values_list("attribute_id", flat=True)
-            )
-            done_ids = set(
-                FlightItemState.objects.filter(
-                    flight_session=session, status__in=("checked", "skipped")
-                ).values_list("checklist_item_id", flat=True)
-            )
-
-            # Visible items in step order, attributes prefetched to avoid N+1
-            all_items = list(
-                CheckItem.objects.filter(procedure=procedure)
-                .prefetch_related("attributes")
-                .order_by("step")
-            )
-            visible_items = [
-                i for i in all_items
-                if i.shouldshow(active_attr_ids) or i.should_warn(active_attr_ids)
-            ]
-
-            def is_optional(item):
-                return any(a.pk == _OPTIONAL_ATTR for a in item.attributes.all())
+            # Same helpers the browser poll uses, so the plugin and the screen
+            # can never disagree about what is visible or what is blocking.
+            active_attr_ids = active_attribute_ids(session)
+            done_ids = done_item_ids(session)
+            sequence = visible_items(procedure, active_attr_ids)
 
             # RequireAllVisible mode: the gate covers every visible item (optional
             # included) and nothing is auto-skipped — each visible row must be
             # checked. Default mode: optionals are non-blocking and may be skipped.
             require_all = session.require_all_visible
 
-            def is_gate_candidate(item):
-                return require_all or not is_optional(item)
-
-            # Gate: first visible, not-done, gate-candidate item
-            gate_step = None
-            for item in visible_items:
-                if item.pk not in done_ids and is_gate_candidate(item):
-                    gate_step = item.step
-                    break
+            gate = gate_item(sequence, done_ids, require_all)
+            gate_step = None if gate is None else gate.step
 
             # Active zone: not-done items up to and including the gate
             active_items = [
-                i for i in visible_items
+                i for i in sequence
                 if i.pk not in done_ids and (gate_step is None or i.step <= gate_step)
             ]
 
-            # Log when the blocking gate item changes (Option A debug aid).
-            gate_item = next(
-                (i for i in visible_items if i.pk not in done_ids and is_gate_candidate(i)),
-                None,
-            )
+            gate_item_ = gate
             prev_gate = _last_gate_item.get(session.pk, -1)
-            new_gate_pk = gate_item.pk if gate_item else None
+            new_gate_pk = gate_item_.pk if gate_item_ else None
             if new_gate_pk != prev_gate:
                 _last_gate_item[session.pk] = new_gate_pk
-                if gate_item is not None:
-                    rule = gate_item.auto_check_rule
+                if gate_item_ is not None:
+                    rule = gate_item_.auto_check_rule
                     entry = {
                         "ts": now.isoformat(),
                         "event": "gate_changed",
-                        "item_id": gate_item.pk,
-                        "item": gate_item.item,
+                        "item_id": gate_item_.pk,
+                        "item": gate_item_.item,
                         "rule": rule,
                     }
                     if rule is not None:
@@ -441,7 +414,7 @@ def plugin_state(request):
 
             # Collect watch datarefs from all visible items with rules (not just
             # active ones) so the plugin keeps streaming them even when already done.
-            for item in visible_items:
+            for item in sequence:
                 if item.auto_check_rule is not None:
                     watch.extend(collect_datarefs(item.auto_check_rule))
 
@@ -457,7 +430,7 @@ def plugin_state(request):
                     # rule first — if it fires, auto-check it; otherwise skip it.
                     # RequireAllVisible mode never skips: the gate already stops at
                     # the first not-done item, so there is nothing to resolve here.
-                    for candidate in visible_items:
+                    for candidate in sequence:
                         if require_all:
                             break
                         if candidate.step >= item.step:

@@ -8,6 +8,13 @@ from django.http import JsonResponse
 from django.views.decorators.http import require_GET, require_POST
 
 from .models import Attribute, CheckItem, FlightItemState, FlightSession, FlightSessionAttribute, IdleDataref, Procedure
+from .phase import (
+    active_attribute_ids,
+    done_item_ids,
+    gate_item,
+    phase_state,
+    visible_items,
+)
 from .rules import collect_datarefs, collect_leaf_evaluations, evaluate_rule
 
 # The poll cursor is a server timestamp echoed back to the client (see poll_view).
@@ -138,16 +145,18 @@ def poll_view(request):
             proc_items = list(
                 CheckItem.objects.filter(procedure=proc).prefetch_related("attributes")
             )
-            visible_items = [i for i in proc_items if i.shouldshow(active_attr_ids_for_show)]
-            if visible_items:
-                done_ids = set(
+            # Local name deliberately not `visible_items` — that is the imported
+            # helper, and rebinding it here would shadow it for the whole view.
+            proc_visible = [i for i in proc_items if i.shouldshow(active_attr_ids_for_show)]
+            if proc_visible:
+                proc_done_ids = set(
                     FlightItemState.objects.filter(
                         flight_session=session,
-                        checklist_item__in=visible_items,
+                        checklist_item__in=proc_visible,
                         status__in=("checked", "skipped"),
                     ).values_list("checklist_item_id", flat=True)
                 )
-                all_done = all(i.pk in done_ids for i in visible_items)
+                all_done = all(i.pk in proc_done_ids for i in proc_visible)
                 if not all_done:
                     show_procedures.append(proc.slug)
                 # all_done + continuously True → silently skip. States preserved. No loop.
@@ -170,13 +179,14 @@ def poll_view(request):
             display = "—"
         show_live_values.append({"label": dr.label, "value": display, "unit": dr.unit})
 
-    # ── active_warn_ids: warn items that are currently active and failing ───────
-    # Sent on every poll so the JS shows only the specific warn row(s) that are
-    # currently blocking, not all warn rows at once.
+    # ── Authoritative phase state ─────────────────────────────────────────────
+    # Computed server-side and sent whole: the browser acts on this rather than
+    # re-deriving completion from the DOM (ADR-003). The same function answers
+    # /api/check/ and /api/uncheck/, so a tap never waits for the next poll.
     _OPTIONAL_ATTR = 4
 
     procedure_slug = request.GET.get("procedure", "")
-    active_warn_ids = []
+    state = {"phase_complete": False, "blocking_item_ids": [], "active_warn_ids": []}
     _poll_procedure = None          # reused by DEBUG block below
     _poll_active_attr_ids = None
     _poll_done_ids = None
@@ -186,50 +196,20 @@ def poll_view(request):
     if procedure_slug:
         try:
             _poll_procedure = Procedure.objects.get(slug=procedure_slug)
-            _poll_active_attr_ids = list(
-                FlightSessionAttribute.objects.filter(
-                    flight_session=session, is_active=True
-                ).values_list("attribute_id", flat=True)
-            )
-            _poll_done_ids = set(
-                FlightItemState.objects.filter(
-                    flight_session=session, status__in=("checked", "skipped")
-                ).values_list("checklist_item_id", flat=True)
-            )
-            _poll_all_items = list(
-                CheckItem.objects.filter(procedure=_poll_procedure)
-                .prefetch_related("attributes")
-                .order_by("step")
-            )
-            _poll_visible_items = [
-                i for i in _poll_all_items
-                if i.shouldshow(_poll_active_attr_ids) or i.should_warn(_poll_active_attr_ids)
-            ]
-
-            def _is_optional(item):
-                return any(a.pk == _OPTIONAL_ATTR for a in item.attributes.all())
-
-            # RequireAllVisible mode: the gate covers every visible item, so an
-            # unchecked optional gates the warn window just like a required item.
-            _require_all = session.require_all_visible
-
-            _poll_gate_step = None
-            for item in _poll_visible_items:
-                if item.pk not in _poll_done_ids and (_require_all or not _is_optional(item)):
-                    _poll_gate_step = item.step
-                    break
-
-            for item in _poll_visible_items:
-                if not item.should_warn(_poll_active_attr_ids):
-                    continue
-                if item.pk in _poll_done_ids:
-                    continue
-                if _poll_gate_step is not None and item.step > _poll_gate_step:
-                    continue
-                if item.auto_check_rule is not None and not evaluate_rule(item.auto_check_rule, last_state):
-                    active_warn_ids.append(item.pk)
         except Procedure.DoesNotExist:
             pass
+        else:
+            state = phase_state(session, _poll_procedure, last_state)
+            _poll_active_attr_ids = active_attribute_ids(session)
+            _poll_done_ids = done_item_ids(session)
+            _poll_visible_items = visible_items(_poll_procedure, _poll_active_attr_ids)
+            _gate = gate_item(_poll_visible_items, _poll_done_ids, session.require_all_visible)
+            _poll_gate_step = None if _gate is None else _gate.step
+
+    active_warn_ids = state["active_warn_ids"]
+
+    def _is_optional(item):
+        return any(a.pk == _OPTIONAL_ATTR for a in item.attributes.all())
 
     response = {
         "checked_items": checked_items,
@@ -240,6 +220,7 @@ def poll_view(request):
         "show_procedures": show_procedures,
         "show_live_values": show_live_values,
         "active_warn_ids": active_warn_ids,
+        "phase_state": state,
     }
 
     if settings.DEBUG and session is not None:
@@ -248,15 +229,15 @@ def poll_view(request):
             try:
                 active_attr_ids = _poll_active_attr_ids
                 done_ids = _poll_done_ids
-                visible_items = _poll_visible_items
+                dbg_visible = _poll_visible_items   # not `visible_items`: see above
                 gate_step = _poll_gate_step
 
                 active_items = [
-                    i for i in visible_items
+                    i for i in dbg_visible
                     if i.pk not in done_ids and (gate_step is None or i.step <= gate_step)
                 ]
 
-                warn_items = [i for i in visible_items if i.should_warn(active_attr_ids)]
+                warn_items = [i for i in dbg_visible if i.should_warn(active_attr_ids)]
                 warn_ids = {i.pk for i in warn_items}
 
                 for item in active_items:
@@ -329,6 +310,12 @@ def poll_view(request):
     return JsonResponse(response)
 
 
+def _phase_state_for(session, item):
+    """Phase state for the procedure the item belongs to, using the cached snapshot."""
+    from .plugin_views import get_datarefs
+    return phase_state(session, item.procedure, get_datarefs(session))
+
+
 @require_POST
 def check_view(request):
     """
@@ -369,7 +356,16 @@ def check_view(request):
         },
     )
 
-    return JsonResponse({"status": "ok", "id": item_id, "source": "MANUAL"})
+    # Return the state this write produced. Without it the browser would have to
+    # wait for the next poll to learn the procedure is finished, which is the
+    # latency that made deriving completion client-side tempting in the first
+    # place (ADR-003).
+    return JsonResponse({
+        "status": "ok",
+        "id": item_id,
+        "source": "MANUAL",
+        "phase_state": _phase_state_for(session, item),
+    })
 
 
 @require_POST
@@ -407,7 +403,11 @@ def uncheck_view(request):
         flight_session=session, checklist_item=item
     ).delete()
 
-    return JsonResponse({"status": "ok", "id": item_id})
+    return JsonResponse({
+        "status": "ok",
+        "id": item_id,
+        "phase_state": _phase_state_for(session, item),
+    })
 
 
 @require_GET

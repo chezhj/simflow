@@ -269,16 +269,24 @@
        the pilot tapped it. Whether it happens to be on screen this instant is
        not the question: an unresolved warn item is an unfinished safety step.
        autoContinue controls destination only: True → nextproc, False → idle. */
-    var advanceTimer   = null;
-    var simUnavailable = false;   /* no live datarefs → warn rules can never resolve */
+    var advanceTimer  = null;
+    var phaseComplete = false;   /* authoritative, from the server */
+
+    /* Completion is the server's answer, never re-derived here: it owns the gate,
+       and an unresolved warn item is itself a gate candidate, so "nothing is
+       blocking" already covers the safety case the DOM count used to get wrong.
+       With no live datarefs a warn rule evaluates false, so the row stays visible
+       and the pilot can still clear it by tapping — nobody gets stranded. */
+    function applyPhaseState(ps) {
+        if (!ps) return;
+        phaseComplete = !!ps.phase_complete;
+        maybeAutoAdvance();
+    }
 
     function autoAdvanceReady() {
-        if (!hasCheckedThisVisit || totalItems === 0) return false;
-        if (checkedCount !== totalItems) return false;
-        /* Manual-only / sim lost: a warn rule has nothing to evaluate against, so
-           holding the procedure open forever would strand the pilot. */
-        if (simUnavailable) return true;
-        return document.querySelectorAll('.ci-warn:not([data-warn-resolved])').length === 0;
+        /* hasCheckedThisVisit stops a page load on an already-finished procedure
+           from bouncing straight back out of it. */
+        return hasCheckedThisVisit && phaseComplete;
     }
 
     function maybeAutoAdvance() {
@@ -312,6 +320,25 @@
         return el ? el.value : '';
     }
 
+    /* ── Persist a state change and adopt the phase state it returns ──
+       The response carries the same phase_state the poll would, so a tap that
+       finishes a procedure advances immediately instead of waiting up to a full
+       poll interval. onFail rolls the optimistic render back. */
+    function postCheck(url, itemId, onFail) {
+        fetch(url, {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json', 'X-CSRFToken': getCsrf()},
+            body: JSON.stringify({check_item_id: itemId})
+        }).then(function (res) {
+            if (!res.ok) throw new Error('http ' + res.status);
+            return res.json();
+        }).then(function (data) {
+            applyPhaseState(data && data.phase_state);
+        }).catch(function () {
+            onFail();
+        });
+    }
+
     /* ── Toggle a row: optimistic update + persist to DB ── */
     function toggleItem(row) {
         var box    = row.querySelector('.check-box');
@@ -324,12 +351,7 @@
             row.dataset.warnResolved = '1';
             row.classList.add('js-hidden');
             updateProgress();
-            maybeAutoAdvance();
-            fetch('/api/check/', {
-                method: 'POST',
-                headers: {'Content-Type': 'application/json', 'X-CSRFToken': getCsrf()},
-                body: JSON.stringify({check_item_id: itemId})
-            }).catch(function () {
+            postCheck('/api/check/', itemId, function () {
                 delete row.dataset.warnResolved;
                 row.classList.remove('js-hidden');
                 updateProgress();
@@ -343,12 +365,7 @@
             checkedCount = Math.max(0, checkedCount - 1);
             manualCount  = Math.max(0, manualCount  - 1);
             updateProgress();
-            maybeAutoAdvance();
-            fetch('/api/uncheck/', {
-                method: 'POST',
-                headers: {'Content-Type': 'application/json', 'X-CSRFToken': getCsrf()},
-                body: JSON.stringify({check_item_id: itemId})
-            }).catch(function () {
+            postCheck('/api/uncheck/', itemId, function () {
                 row.classList.add('ci-manual');
                 box.innerHTML = TICK_SVG;
                 checkedCount += 1;
@@ -362,13 +379,8 @@
             manualCount  += 1;
             hasCheckedThisVisit = true;
             updateProgress();
-            maybeAutoAdvance();
             scrollToFirstUncheckedAfter(row);
-            fetch('/api/check/', {
-                method: 'POST',
-                headers: {'Content-Type': 'application/json', 'X-CSRFToken': getCsrf()},
-                body: JSON.stringify({check_item_id: itemId})
-            }).catch(function () {
+            postCheck('/api/check/', itemId, function () {
                 row.classList.remove('ci-manual');
                 box.innerHTML = '';
                 checkedCount = Math.max(0, checkedCount - 1);
@@ -843,10 +855,7 @@
             });
             updateProgress();
 
-            /* Only now, with checked_items applied and warn rows settled, is the
-               view current enough to decide whether the procedure is finished. */
-            simUnavailable = !data.sim_connected && (data.last_seen === 0 || simLost);
-            maybeAutoAdvance();
+            applyPhaseState(data.phase_state);
 
             /* Every procedure is always reachable in the nav now; show_procedures
                only drives the suggested highlight + banner (no auto-nav here). */

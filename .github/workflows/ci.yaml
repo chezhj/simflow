@@ -1,0 +1,38 @@
+# Continuous integration.
+#
+# Runs the same checks the release gate runs (release-deploy.yaml), but on every
+# push and pull request instead of only on a v* tag — so a regression surfaces at
+# commit time rather than half way through a deploy.
+name: CI
+
+on:
+  push:
+    branches:
+      - "**"
+    tags-ignore:
+      - "**"          # tags are handled by release-deploy.yaml / plugin-release.yml
+  pull_request:
+
+concurrency:
+  # A new push to the same ref supersedes an in-flight run.
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    name: Tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.11"
+
+      - name: Install dependencies
+        run: |
+          pip install poetry
+          poetry install --no-interaction
+
+      - name: Run tests
+        run: poetry run pytest
