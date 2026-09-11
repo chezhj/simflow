@@ -7,6 +7,7 @@
 {% block page_class %}page-checklist{% endblock page_class %}
 
 {% block head %}
+    <script src="{% static 'checklist/simflow-core.js' %}"></script>
     <script src="{% static 'checklist/toggle_switches.js' %}"></script>
     <script src="{% static 'checklist/wakelock.js' %}"></script>
 {% endblock head %}
@@ -205,6 +206,9 @@
        so they must stay out of the denominator AND the numerator — counting a
        checked warn row in checkedCount alone pushed it past totalItems and
        wedged the completion test for the rest of the procedure. */
+    /* Shared with idle.html — see static/checklist/simflow-core.js */
+    var escHtml = SimFlow.escHtml;
+
     var totalItems       = document.querySelectorAll('.ci:not([data-warn])').length;
     var checkedCount     = document.querySelectorAll('.ci-manual:not([data-warn]), .ci-auto:not([data-warn]), .ci-skipped:not([data-warn])').length;
     var autoCount        = document.querySelectorAll('.ci-auto:not([data-warn])').length;
@@ -736,29 +740,29 @@
        initializing   — plugin fetched session but no datarefs yet (<15 s)
        disconnected   — was seen before, now lost (>30 s)
        else           — never connected (manual only) */
-    window.updateConnectionBadge = function (simConnected, aircraft, reconnecting, initializing, disconnected) {
+    window.updateConnectionBadge = function (state, aircraft) {
         var dot    = document.getElementById('sim-dot');
         var status = document.getElementById('conn-status');
 
         dot.classList.remove('sim-connected', 'sim-reconnecting', 'sim-initializing');
         status.classList.remove('sim-connected', 'sim-reconnecting', 'sim-initializing');
 
-        if (simConnected) {
+        if (state === 'connected') {
             dot.classList.add('sim-connected');
             status.classList.add('sim-connected');
             var parts = ['X-Plane Live'];
             if (aircraft) parts.push(aircraft);
             parts.push('1 Hz');
             status.textContent = parts.join(' · ');
-        } else if (reconnecting) {
+        } else if (state === 'reconnecting') {
             dot.classList.add('sim-reconnecting');
             status.classList.add('sim-reconnecting');
             status.textContent = 'Reconnecting\u2026';
-        } else if (initializing) {
+        } else if (state === 'initializing') {
             dot.classList.add('sim-initializing');
             status.classList.add('sim-initializing');
             status.textContent = 'X-Plane initializing\u2026';
-        } else if (disconnected) {
+        } else if (state === 'disconnected') {
             status.textContent = 'Simulator disconnected';
         } else {
             status.textContent = 'Manual only';
@@ -862,13 +866,14 @@
             applySuggestions(data.show_procedures || []);
             if (data.debug_rules !== undefined) { renderDebugRules(data.debug_rules, data.debug_attributes || [], data.debug_show_procedures || []); }
 
-            /* Derive 5-state badge: connected / reconnecting / initializing / disconnected / manual */
-            var age          = data.last_seen > 0 ? (nowServer - data.last_seen) : Infinity;
-            var reconnecting = !data.sim_connected && data.last_seen > 0 && age < 30;
-            var disconnected = !data.sim_connected && data.last_seen > 0 && age >= 30;
-            updateConnectionBadge(data.sim_connected, null, reconnecting, data.sim_initializing, disconnected);
+            updateConnectionBadge(SimFlow.connectionState({
+                simConnected:    data.sim_connected,
+                simInitializing: data.sim_initializing,
+                lastSeen:        data.last_seen,
+                now:             nowServer,
+            }), null);
         } catch (e) {
-            updateConnectionBadge(false, null, false, false, false);
+            updateConnectionBadge('manual', null);
         }
     }
 
@@ -901,12 +906,6 @@
     }
 
     /* ── Attribute transition: intercept nav clicks ── */
-
-    function escHtml(s) {
-        return String(s)
-            .replace(/&/g, '&amp;').replace(/</g, '&lt;')
-            .replace(/>/g, '&gt;').replace(/"/g, '&quot;');
-    }
 
     async function navigateWithTransition(targetUrl) {
         try {

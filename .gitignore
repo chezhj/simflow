@@ -7,3 +7,6 @@ coverage.lcov
 **/static/colorfield
 smart_training_checklist/settings/.env
 logs/
+
+# Node is used only for the browser helper unit tests (npm test).
+node_modules/

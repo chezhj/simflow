@@ -1,0 +1,8 @@
+{
+  "name": "simflow-browser",
+  "private": true,
+  "description": "Unit tests for the pure browser helpers in checklist/static/checklist/. No runtime dependencies; uses Node's built-in test runner.",
+  "scripts": {
+    "test": "node --test js-tests/*.test.js"
+  }
+}

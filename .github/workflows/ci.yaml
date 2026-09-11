@@ -36,3 +36,18 @@ jobs:
 
       - name: Run tests
         run: poetry run pytest
+
+  js:
+    name: Browser helper unit tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
+      # No dependencies to install: the helpers are dependency-free and the
+      # runner is Node's built-in `node --test`.
+      - name: Run tests
+        run: npm test
