@@ -44,8 +44,14 @@ ignored_tag_formats = ["plugin-v*", "sop*"]
 version_files = [
     "smart_training_checklist/__init__.py",
 ]
-post_bump_hooks=[
-  "push_all"
+# Run inline rather than calling a machine-local `push_all` script: that script
+# lived outside the repo, so when it stopped working the release silently pushed
+# the commit without the tag — and the tag is what triggers the deploy.
+# Two commands because commitizen creates LIGHTWEIGHT tags, which
+# `git push --follow-tags` does not push (it only follows annotated ones).
+post_bump_hooks = [
+  "git push",
+  "git push --tags",
 ]
 
 [tool.poetry.requires-plugins]

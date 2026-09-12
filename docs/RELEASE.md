@@ -23,7 +23,13 @@ Three independent release processes share one mono-repo. Each has its own versio
 cz bump
 ```
 
-Commitizen updates `smart_training_checklist/__init__.py` and `pyproject.toml`, appends an entry to `CHANGELOG.md`, creates a commit and tag (`v<new>`), then runs the `push_all` post-hook which executes `git push --follow-tags`.
+Commitizen updates `smart_training_checklist/__init__.py` and `pyproject.toml`, appends an entry to `CHANGELOG.md`, creates a commit and tag (`v<new>`), then runs its `post_bump_hooks`: `git push` followed by `git push --tags`.
+
+> Both commands are needed. Commitizen creates **lightweight** tags, and
+> `git push --follow-tags` pushes only *annotated* ones — so the old
+> `push_all` hook pushed the commit and silently skipped the tag. Since the
+> deploy is triggered by the `v*` tag, that meant no deploy, with no error.
+> Check `git ls-remote --tags origin "v*"` if a release seems not to have shipped.
 
 **2. Deploy to production** (run on the prod server)
 

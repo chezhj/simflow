@@ -50,7 +50,7 @@ Settings are split into `smart_training_checklist/settings/`:
 
 ## Deployment
 
-Deploys are automated via GitHub Actions and triggered by pushing a `v*` tag — which `cz bump` does for you (the `post_bump_hooks` `push_all` step pushes the tag). The pipeline runs tests, creates a GitHub release, ships the built tree to the cPanel/CloudLinux server (`simflow.vdwaal.net` on `/home/vdwanet`), then activates it with an automatic smoke test and rollback.
+Deploys are automated via GitHub Actions and triggered by pushing a `v*` tag — which `cz bump` does for you (its `post_bump_hooks` run `git push` then `git push --tags`; both are needed because commitizen creates lightweight tags, which `--follow-tags` will not push). The pipeline runs tests, creates a GitHub release, ships the built tree to the cPanel/CloudLinux server (`simflow.vdwaal.net` on `/home/vdwanet`), then activates it with an automatic smoke test and rollback.
 
 Three moving parts:
 
