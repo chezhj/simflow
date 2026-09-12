@@ -144,6 +144,6 @@ deploy.sh app <version-tag>
 
 > ⚠️ `deploy.sh` (in the separate deploy repo) does **not** load the fixture yet. Until it does, load it manually on prod after deploying:
 > ```
-> python manage.py checklist_content import --replace
+> python manage.py checklist_content import --prune
 > ```
-> `--replace` wipes existing `Attribute`, `Procedure`, and `CheckItem` rows before loading, which avoids PK conflicts on a clean deploy. It asks for confirmation before deleting. `SOP` is not wiped — `loaddata` updates it in place by PK.
+> `--prune` deletes the `Attribute`, `Procedure` and `CheckItem` rows the fixture no longer carries, after loading. Rows still in the fixture are updated in place and keep their pk, so user preferences and in-flight progress stay attached. It asks for confirmation before deleting anything, and `--dry-run` reports the plan without writing. `SOP` is never pruned. (`--replace` is still accepted as an alias.)

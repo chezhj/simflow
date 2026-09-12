@@ -62,7 +62,9 @@ Three moving parts:
 
 **Persistent state** (`db.sqlite3`, `.env`) lives in `~/domains/shared/simflow/` and is symlinked into each release, so it survives deploys. Because `DATABASE_SOURCE=production`, the live DB is backed up before every `migrate`.
 
-**Checklist content ships with the app**: after `migrate`, `POST_MIGRATE_COMMANDS` runs `checklist_content import --replace --noinput`, which wipes and reloads the content tables from `checklist/fixtures/checklist_content.json` in that release. Edit content via the fixture (see the content workflow), not the destructive export. User/session data is never touched.
+**Checklist content ships with the app**: after `migrate`, `POST_MIGRATE_COMMANDS` runs `checklist_content import --prune --noinput`, which upserts the content tables from `checklist/fixtures/checklist_content.json` in that release and then deletes the rows that fixture no longer carries. Edit content via the fixture (see the content workflow), not the destructive export.
+
+The import is deliberately not a wipe-and-reload. `Attribute`, `Procedure` and `CheckItem` are referenced with CASCADE by `UserAttributeDefault`, `FlightSessionAttribute` and `FlightItemState`, so deleting a row that is about to be re-created destroys saved preferences and in-flight progress — which is exactly what happened on every deploy until v2.6. Rows that survive keep their pk and are updated in place; a delete now means the content is genuinely gone, and the cascade that follows is intended. Two rules the fixture must honour, both enforced by pre-flight validation that aborts before writing: never recycle a pk, and every reference must resolve to a row that survives the import. `checklist_content import --prune --dry-run` reports the add/update/delete plan without writing.
 
 **Requires** the `SSH_HOST` / `SSH_USER` / `SSH_PRIVATE_KEY` / `SSH_KNOWN_HOSTS` (and optional `SSH_PORT`) repo secrets. `passenger_wsgi.py` defaults `DJANGO_SETTINGS_MODULE` to prod so the live app runs prod settings.
 

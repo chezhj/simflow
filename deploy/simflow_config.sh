@@ -25,13 +25,15 @@ DATABASE_SOURCE="production"                # production | repository
 # shared/<app>/ automatically, so no extra shared paths are needed.
 SHARED_PATHS=()
 
-# Checklist content is deployed together with the app: after migrate, wipe and
-# reload the content tables (SOP, Attribute, Procedure, CheckItem) from the
-# fixture shipped inside this release (checklist/fixtures/checklist_content.json).
-# User and session data are never touched by this command. activate.sh guards
+# Checklist content is deployed together with the app: after migrate, upsert the
+# content tables (SOP, Attribute, Procedure, CheckItem) from the fixture shipped
+# inside this release (checklist/fixtures/checklist_content.json) and prune the
+# rows that fixture no longer carries. Rows that survive keep their pk, so saved
+# preferences and in-flight progress stay attached to them; a pruned row is one
+# the content genuinely dropped. activate.sh guards
 # each command with a `manage.py help --commands` check, so it is safely skipped
 # (not an error) when re-activating an older tag that lacks the command.
-POST_MIGRATE_COMMANDS=("checklist_content import --replace --noinput")
+POST_MIGRATE_COMMANDS=("checklist_content import --prune --noinput")
 
 # Used by the GitHub Actions smoke test after activation.
 SMOKE_URL="https://simflow.vdwaal.net/"
