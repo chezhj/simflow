@@ -1,3 +1,24 @@
+## v2.6.0 (2026-09-12)
+
+### Feat
+
+- **phase**: make the server authoritative for phase completion
+
+### Fix
+
+- **csrf**: one token helper for both pages, and a config channel for static JS
+- **checklist**: stop auto-advance abandoning unchecked warn items
+- **plugin**: let the manual check button check blocking warn items
+- **poll**: share the dataref snapshot across worker processes
+
+### Refactor
+
+- **js**: extract shared browser helpers and unit-test them
+
+### Perf
+
+- **poll**: stop the per-item queries in the poll and plugin state loops
+
 ## v2.5.1 (2026-09-04)
 
 ### Fix
