@@ -146,14 +146,19 @@ class Command(BaseCommand):
         for model, count in sorted(counts.items()):
             self.stdout.write(f"  {model}: {count} records")
 
-        if replace:
-            if interactive:
-                self._confirm_replace()
-            self._wipe_content_tables()
+        # Confirmation is asked before the transaction opens: prompting inside it
+        # would hold the write lock open for as long as the operator takes to answer.
+        if replace and interactive:
+            self._confirm_replace()
 
         self.stdout.write("Loading fixture …")
         try:
+            # The wipe belongs INSIDE the transaction. With it outside, a failing
+            # load left the content tables empty while this command reported
+            # "No changes were made" — on a deploy that is an emptied live site.
             with transaction.atomic():
+                if replace:
+                    self._wipe_content_tables()
                 call_command("loaddata", str(fixture_path), verbosity=1)
         except Exception as exc:
             raise CommandError(
