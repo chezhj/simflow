@@ -196,9 +196,11 @@ it needs `npm i -D jsdom`, which would be the project's first runtime-ish dev de
 - **ADR-002 drift**: it states `active_phase` is a forward-only frontier, but
   `views.py:702` now says `not forward-only — follows pilot navigation`. The
   behaviour was reversed and the ADR never amended. Decide which is correct.
-- **Poll N+1**: `shouldshow()`/`should_warn()` call `self.attributes.values_list(...)`,
-  bypassing the `prefetch_related` the queryset already does — ~2 queries per item
-  (measured: 31 queries for 10 items, 71 for 30). Fix this before ever shortening
-  the poll interval.
+- ~~**Poll N+1**~~ — **fixed**. `shouldshow()`/`should_warn()` now use `.all()`, so
+  the `prefetch_related` the callers already pay for is actually used, and
+  `poll_view` gathers its phase context once instead of twice. The poll went from
+  `15 + 3n` queries to a flat **10**, and `/api/plugin/state/` likewise stopped
+  scaling. `checklist/tests/test_query_counts.py` guards both against regression.
+  Shortening the poll interval is now affordable, if it is ever wanted.
 - **Not deployed**: the four commits on the branch are not on `master` and not
   released. Deploy is triggered by `cz bump` pushing a `v*` tag.

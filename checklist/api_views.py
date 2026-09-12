@@ -8,13 +8,7 @@ from django.http import JsonResponse
 from django.views.decorators.http import require_GET, require_POST
 
 from .models import Attribute, CheckItem, FlightItemState, FlightSession, FlightSessionAttribute, IdleDataref, Procedure
-from .phase import (
-    active_attribute_ids,
-    done_item_ids,
-    gate_item,
-    phase_state,
-    visible_items,
-)
+from .phase import PhaseContext, active_attribute_ids, phase_state
 from .rules import collect_datarefs, collect_leaf_evaluations, evaluate_rule
 
 # The poll cursor is a server timestamp echoed back to the client (see poll_view).
@@ -109,11 +103,8 @@ def poll_view(request):
     from .plugin_views import get_datarefs
     last_state = get_datarefs(session)
 
-    active_attr_ids_for_show = list(
-        FlightSessionAttribute.objects.filter(
-            flight_session=session, is_active=True
-        ).values_list("attribute_id", flat=True)
-    )
+    # Session-scoped, so looked up once and reused by the phase context below.
+    active_attr_ids_for_show = active_attribute_ids(session)
 
     prev_state = session.show_rule_state   # {str(proc.pk): bool}
     new_state = {}
@@ -199,12 +190,13 @@ def poll_view(request):
         except Procedure.DoesNotExist:
             pass
         else:
-            state = phase_state(session, _poll_procedure, last_state)
-            _poll_active_attr_ids = active_attribute_ids(session)
-            _poll_done_ids = done_item_ids(session)
-            _poll_visible_items = visible_items(_poll_procedure, _poll_active_attr_ids)
-            _gate = gate_item(_poll_visible_items, _poll_done_ids, session.require_all_visible)
-            _poll_gate_step = None if _gate is None else _gate.step
+            ctx = PhaseContext(session, _poll_procedure, last_state,
+                                active_attr_ids=active_attr_ids_for_show)
+            state = ctx.state()
+            _poll_active_attr_ids = ctx.active_attr_ids
+            _poll_done_ids        = ctx.done_ids
+            _poll_visible_items   = ctx.items
+            _poll_gate_step       = ctx.gate_step
 
     active_warn_ids = state["active_warn_ids"]
 

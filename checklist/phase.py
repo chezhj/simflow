@@ -95,21 +95,55 @@ def failing_warn_ids(items, done_ids, gate, datarefs, active_attr_ids) -> list[i
     return out
 
 
-def phase_state(session, procedure, datarefs) -> dict:
-    """Authoritative phase state for the browser.
-
-    ``phase_complete`` is simply "nothing is blocking". Because an unresolved
-    warn item is itself a gate candidate, that single condition also covers the
-    safety case the browser used to get wrong.
+class PhaseContext:
     """
-    active_attr_ids = active_attribute_ids(session)
-    done_ids = done_item_ids(session)
-    items = visible_items(procedure, active_attr_ids)
-    gate = gate_item(items, done_ids, session.require_all_visible)
-    return {
-        "phase_complete": gate is None,
-        "blocking_item_ids": [] if gate is None else [gate.pk],
-        "active_warn_ids": failing_warn_ids(
-            items, done_ids, gate, datarefs, active_attr_ids
-        ),
-    }
+    Everything the phase computation needs, gathered once.
+
+    poll_view wants both the state and the intermediate pieces (the debug panel
+    needs the item list and the gate). Deriving them separately meant querying
+    the same three tables twice on every poll, so they are gathered here and
+    shared.
+    """
+
+    __slots__ = ("session", "procedure", "datarefs",
+                 "active_attr_ids", "done_ids", "items", "gate")
+
+    def __init__(self, session, procedure, datarefs, active_attr_ids=None):
+        self.session = session
+        self.procedure = procedure
+        self.datarefs = datarefs or {}
+        # Caller may pass this in when it already has it — it is session-scoped,
+        # so recomputing it per procedure is pure waste.
+        self.active_attr_ids = (
+            active_attribute_ids(session) if active_attr_ids is None else active_attr_ids
+        )
+        self.done_ids = done_item_ids(session)
+        self.items = visible_items(procedure, self.active_attr_ids)
+        self.gate = gate_item(self.items, self.done_ids, session.require_all_visible)
+
+    @property
+    def gate_step(self):
+        """Step of the blocking item, or None when nothing is blocking."""
+        return None if self.gate is None else self.gate.step
+
+    def state(self) -> dict:
+        """
+        Authoritative phase state for the browser.
+
+        ``phase_complete`` is simply "nothing is blocking". Because an
+        unresolved warn item is itself a gate candidate, that single condition
+        also covers the safety case the browser used to get wrong.
+        """
+        return {
+            "phase_complete": self.gate is None,
+            "blocking_item_ids": [] if self.gate is None else [self.gate.pk],
+            "active_warn_ids": failing_warn_ids(
+                self.items, self.done_ids, self.gate,
+                self.datarefs, self.active_attr_ids,
+            ),
+        }
+
+
+def phase_state(session, procedure, datarefs) -> dict:
+    """Phase state alone, for callers that need nothing else (check/uncheck)."""
+    return PhaseContext(session, procedure, datarefs).state()

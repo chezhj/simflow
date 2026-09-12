@@ -161,7 +161,9 @@ class CheckItem(models.Model):
             return "CHECKED"
 
     def shouldshow(self, profile_list):
-        attributes = self.attributes.values_list("id", flat=True)
+        # .all() is served from prefetch_related("attributes"); .values_list()
+        # builds a new queryset and so always hits the database, once per item.
+        attributes = [a.id for a in self.attributes.all()]
         if attributes:
             matching = set(attributes) & set(profile_list)
             return len(matching) == len(attributes)
@@ -187,7 +189,7 @@ class CheckItem(models.Model):
         """
         if self.auto_check_rule is None:
             return False
-        attr_ids = set(self.attributes.values_list("id", flat=True))
+        attr_ids = {a.id for a in self.attributes.all()}   # see shouldshow()
         profile = set(profile_list)
         return (
             self._INFO_ATTR in attr_ids
