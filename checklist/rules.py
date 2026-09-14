@@ -2,8 +2,11 @@
 import math
 
 
+_EARTH_RADIUS_M = 6_371_000
+
+
 def _haversine_meters(lat1, lon1, lat2, lon2):
-    R = 6_371_000
+    R = _EARTH_RADIUS_M
     p = math.pi / 180
     dlat = (lat2 - lat1) * p
     dlon = (lon2 - lon1) * p
@@ -19,6 +22,106 @@ def _haversine_meters(lat1, lon1, lat2, lon2):
 # TODO: make these configurable per SOP once non-Zibo aircraft are supported.
 _AC_LAT_DATAREF = "sim/flightmodel/position/latitude"
 _AC_LON_DATAREF = "sim/flightmodel/position/longitude"
+
+# True and magnetic heading of the aircraft. Read only to recover the local
+# magnetic variation (true - magnetic), so that a runway course from the FMC —
+# which is magnetic — can be rotated onto a true bearing. Deriving the variation
+# from the aircraft avoids depending on the sign convention of X-Plane's own
+# magnetic_variation dataref.
+_AC_TRUE_HDG_DATAREF = "sim/flightmodel/position/psi"
+_AC_MAG_HDG_DATAREF = "sim/flightmodel/position/mag_psi"
+
+
+def _normalize_deg(angle):
+    """Fold an angle in degrees into [-180, 180)."""
+    return (angle + 180.0) % 360.0 - 180.0
+
+
+def _local_offsets_m(ref_lat, ref_lon, lat, lon):
+    """
+    Metres north and east of (ref_lat, ref_lon), equirectangular approximation.
+    Sub-metre error over the few kilometres a runway spans.
+    """
+    p = math.pi / 180
+    north = (lat - ref_lat) * p * _EARTH_RADIUS_M
+    east = (lon - ref_lon) * p * _EARTH_RADIUS_M * math.cos(ref_lat * p)
+    return north, east
+
+
+def _corridor_course(rule, state):
+    """
+    True bearing of the corridor axis in degrees, or None when it cannot be
+    resolved.
+
+    "crs" names the dataref holding the runway course. The FMC reports a
+    magnetic course, so the local variation — recovered from the aircraft's own
+    true and magnetic heading — is applied unless the rule sets "crs_true".
+    """
+    crs = state.get(rule["crs"])
+    if crs is None:
+        return None
+    if rule.get("crs_true"):
+        return float(crs)
+    true_hdg = state.get(_AC_TRUE_HDG_DATAREF)
+    mag_hdg = state.get(_AC_MAG_HDG_DATAREF)
+    if true_hdg is None or mag_hdg is None:
+        return None
+    return float(crs) + _normalize_deg(float(true_hdg) - float(mag_hdg))
+
+
+def _eval_corridor(rule, state):
+    """
+    Evaluate a corridor node — is the aircraft inside the rectangle centred on
+    the runway centreline?
+
+    The rectangle runs from behind_m before the reference point to ahead_m
+    beyond it, along the runway course, and half_width_m either side of the
+    centreline. Unlike near, this matches an intersection departure anywhere
+    along the runway without widening the trigger to a circle that would also
+    catch parallel taxiways and the opposite threshold.
+
+    Returns (passed, detail); detail is the session-log leaf shape.
+    """
+    ref_lat = float(state.get(rule["ref_lat"], 0.0))
+    ref_lon = float(state.get(rule["ref_lon"], 0.0))
+    course = _corridor_course(rule, state)
+    behind_m = rule.get("behind_m", 0)
+    detail = {
+        "op": "corridor",
+        "ref_lat": rule["ref_lat"],
+        "ref_lon": rule["ref_lon"],
+        "crs": rule["crs"],
+        "ahead_m": rule["ahead_m"],
+        "behind_m": behind_m,
+        "half_width_m": rule["half_width_m"],
+        "course_deg": None if course is None else round(course, 1),
+        "along_m": None,
+        "cross_m": None,
+        "result": False,
+    }
+
+    # FMC runway not programmed yet (the 0.0/0.0 sentinel), or the course is not
+    # in the payload: the condition is simply not met, exactly as for near.
+    if (ref_lat == 0.0 and ref_lon == 0.0) or course is None:
+        return False, detail
+
+    north, east = _local_offsets_m(
+        ref_lat,
+        ref_lon,
+        float(state.get(_AC_LAT_DATAREF, 0.0)),
+        float(state.get(_AC_LON_DATAREF, 0.0)),
+    )
+    theta = course * math.pi / 180
+    along = north * math.cos(theta) + east * math.sin(theta)
+    cross = -north * math.sin(theta) + east * math.cos(theta)
+
+    detail["along_m"] = round(along, 1)
+    detail["cross_m"] = round(cross, 1)
+    detail["result"] = (
+        -behind_m <= along <= rule["ahead_m"]
+        and abs(cross) <= rule["half_width_m"]
+    )
+    return detail["result"], detail
 
 
 def collect_datarefs(rule: dict) -> list:
@@ -40,6 +143,12 @@ def collect_datarefs(rule: dict) -> list:
         return [rule["fmc_line"]]
     if rule.get("op") == "near":
         return [rule["ref_lat"], rule["ref_lon"], _AC_LAT_DATAREF, _AC_LON_DATAREF]
+    if rule.get("op") == "corridor":
+        paths = [rule["ref_lat"], rule["ref_lon"], rule["crs"],
+                 _AC_LAT_DATAREF, _AC_LON_DATAREF]
+        if not rule.get("crs_true"):
+            paths += [_AC_TRUE_HDG_DATAREF, _AC_MAG_HDG_DATAREF]
+        return paths
     result = []
     if dr := rule.get("dataref"):
         result.append(dr)
@@ -112,6 +221,9 @@ def collect_leaf_evaluations(rule: dict, state: dict) -> list:
             op, required = "not_contains", rule.get("not_contains", "")
             passed = required not in str(actual) if actual != "<missing>" else False
         return [{"dataref": path, "op": op, "required": required, "actual": actual, "pass": passed}]
+
+    if rule.get("op") == "corridor":
+        return [_eval_corridor(rule, state)[1]]
 
     # TODO: near evaluation logic duplicated from evaluate_rule; extract a shared
     #       _eval_near(rule, state) helper once a third call site appears.
@@ -189,6 +301,10 @@ def evaluate_rule(rule: dict, state: dict) -> bool:
       {"dataref", "abs_diff_lte", "ref", "ref_index",
        "tolerance"}                                    — |a − b| ≤ tolerance
       {"fmc_line", "contains"/"not_contains", …}       — CDU screen-buffer check
+      {"op": "near", "ref_lat", "ref_lon", "meters"}   — inside a circle
+      {"op": "corridor", "ref_lat", "ref_lon", "crs",
+       "ahead_m", "behind_m", "half_width_m"}          — inside a rectangle
+                                                         along a runway axis
     """
     if "all" in rule:
         return all(evaluate_rule(r, state) for r in rule["all"])
@@ -210,6 +326,9 @@ def evaluate_rule(rule: dict, state: dict) -> bool:
         ac_lat = float(state.get(_AC_LAT_DATAREF, 0.0))
         ac_lon = float(state.get(_AC_LON_DATAREF, 0.0))
         return _haversine_meters(ac_lat, ac_lon, ref_lat, ref_lon) < rule["meters"]
+
+    if rule.get("op") == "corridor":
+        return _eval_corridor(rule, state)[0]
 
     if "fmc_line" in rule:
         path = rule["fmc_line"]

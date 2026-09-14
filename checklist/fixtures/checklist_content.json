@@ -74,10 +74,23 @@
       "show_rule": {
         "all": [
           {
-            "op": "near",
-            "ref_lat": "laminar/B738/fms/ref_runway_start_lat",
-            "ref_lon": "laminar/B738/fms/ref_runway_start_lon",
-            "meters": 500
+            "any": [
+              {
+                "op": "near",
+                "ref_lat": "laminar/B738/fms/ref_runway_start_lat",
+                "ref_lon": "laminar/B738/fms/ref_runway_start_lon",
+                "meters": 500
+              },
+              {
+                "op": "corridor",
+                "ref_lat": "laminar/B738/fms/ref_runway_start_lat",
+                "ref_lon": "laminar/B738/fms/ref_runway_start_lon",
+                "crs": "laminar/B738/fms/ref_runway_crs",
+                "ahead_m": 4000,
+                "behind_m": 150,
+                "half_width_m": 90
+              }
+            ]
           },
           {
             "dataref": "sim/flightmodel/position/y_agl",
