@@ -4694,7 +4694,34 @@
       "action_label": "SET",
       "dataref_expression": "",
       "role": "C",
-      "auto_check_rule": null,
+      "auto_check_rule": {
+        "all": [
+          {
+            "fmc_line": "laminar/B738/fmc1/Line00_L",
+            "contains": "DEPARTURES"
+          },
+          {
+            "any": [
+              {
+                "fmc_line": "laminar/B738/fmc1/Line02_L",
+                "contains": "<SEL>"
+              },
+              {
+                "fmc_line": "laminar/B738/fmc1/Line03_L",
+                "contains": "<SEL>"
+              },
+              {
+                "fmc_line": "laminar/B738/fmc1/Line02_L",
+                "contains": "NONE"
+              },
+              {
+                "fmc_line": "laminar/B738/fmc1/Line03_L",
+                "contains": "NONE"
+              }
+            ]
+          }
+        ]
+      },
       "attributes": [
         4
       ]
@@ -4781,8 +4808,32 @@
       "dataref_expression": "",
       "role": "C",
       "auto_check_rule": {
-        "fmc_line": "laminar/B738/fmc1/Line03_L",
-        "contains": "<SEL>"
+        "all": [
+          {
+            "fmc_line": "laminar/B738/fmc1/Line00_L",
+            "contains": "ARRIVALS"
+          },
+          {
+            "any": [
+              {
+                "fmc_line": "laminar/B738/fmc1/Line02_L",
+                "contains": "<SEL>"
+              },
+              {
+                "fmc_line": "laminar/B738/fmc1/Line03_L",
+                "contains": "<SEL>"
+              },
+              {
+                "fmc_line": "laminar/B738/fmc1/Line02_L",
+                "contains": "NONE"
+              },
+              {
+                "fmc_line": "laminar/B738/fmc1/Line03_L",
+                "contains": "NONE"
+              }
+            ]
+          }
+        ]
       },
       "attributes": [
         4
