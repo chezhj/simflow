@@ -4707,15 +4707,7 @@
                 "contains": "<SEL>"
               },
               {
-                "fmc_line": "laminar/B738/fmc1/Line03_L",
-                "contains": "<SEL>"
-              },
-              {
                 "fmc_line": "laminar/B738/fmc1/Line02_L",
-                "contains": "NONE"
-              },
-              {
-                "fmc_line": "laminar/B738/fmc1/Line03_L",
                 "contains": "NONE"
               }
             ]
@@ -4816,16 +4808,8 @@
           {
             "any": [
               {
-                "fmc_line": "laminar/B738/fmc1/Line02_L",
-                "contains": "<SEL>"
-              },
-              {
                 "fmc_line": "laminar/B738/fmc1/Line03_L",
                 "contains": "<SEL>"
-              },
-              {
-                "fmc_line": "laminar/B738/fmc1/Line02_L",
-                "contains": "NONE"
               },
               {
                 "fmc_line": "laminar/B738/fmc1/Line03_L",
