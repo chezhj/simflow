@@ -9386,5 +9386,26 @@
         3
       ]
     }
+  },
+  {
+    "model": "checklist.checkitem",
+    "pk": 393,
+    "fields": {
+      "item": "Flaps",
+      "procedure": 5,
+      "step": 86,
+      "setting": "Set for take-off (delayed extension in icing conditions)",
+      "action_label": "SET",
+      "dataref_expression": "",
+      "role": "PM",
+      "auto_check_rule": {
+        "dataref": "laminar/B738/FMS/takeoff_flaps_set",
+        "op": "eq",
+        "value": 1
+      },
+      "attributes": [
+        9
+      ]
+    }
   }
 ]
