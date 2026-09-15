@@ -109,3 +109,70 @@ appear. Verify it still fires once at the first TOD.
 2. Descent Procedure (pk=11) should appear exactly once, at the first TOD.
 3. Confirm it does **not** reappear during the subsequent level-off/descent
    segment(s) prior to the 10,000ft handoff to pk=24.
+
+---
+
+## Addendum (2026-09-15): the autobrake guard
+
+### What it is
+
+A sixth leaf now sits alongside the five above:
+
+```json
+{ "dataref": "laminar/B738/autobrake/autobrake_pos", "op": "lt", "value": 2 }
+```
+
+It was added because the phase gate alone still let the procedure open more
+often than wanted. It is a second, independent one-shot guard: once the
+autobrake is armed for landing, the Descent Procedure stops offering itself
+for the rest of the flight.
+
+### Dataref semantics — read this before touching the value
+
+`autobrake_pos` enumerates the selector, it is not a boolean:
+
+| Value | Selector |
+|---|---|
+| 0 | RTO |
+| 1 | OFF |
+| 2 – 5 | 1 / 2 / 3 / MAX |
+
+Established by the content itself: pk 126 "Autobrake — OFF" and pk 342
+"Autobrake — Off" both test `eq 1`; pk 325 "Autobrake — Set As Calculated"
+(step 120 of this very procedure) tests `gt 1`. RTO arming has its own
+dataref, `autobrake_RTO_arm` (pk 51).
+
+`lt 2` therefore means **RTO or OFF — not yet armed for landing**, which is
+the state the aircraft is in from after takeoff until the crew arms the
+autobrake during this procedure.
+
+### History — how it broke
+
+The leaf first shipped as `eq 0` in 40d616f (content 1.3.1), bundled
+undocumented into an unrelated DualPilot commit. `eq 0` means *RTO selected*,
+which the After Takeoff flow (pk 126) clears to OFF on every normal flight, so
+from 1.3.1 the Descent Procedure could not trigger at all — the exact failure
+mode the Verification Status section above warned about, arriving from a
+different leaf than the one it was watching. Corrected to `lt 2`.
+
+### Consequence to be aware of
+
+Arming the autobrake **before** top of descent suppresses the procedure. In
+the normal flow that cannot happen — arming it is step 120 of this procedure —
+but a crew that arms early will not see it. That is the intended trade-off of
+using the autobrake as the "already handled" signal.
+
+### Regression check
+
+Evaluate the live `show_rule` for pk 11 against a cruise snapshot 42 nm from
+TOD (`flightphase_cruise=1`, `vnav_td_dist=42`, `y_agl=11000`,
+`flightphase_landed=0`):
+
+| `autobrake_pos` | Expected |
+|---|---|
+| 0 (RTO) | fires |
+| 1 (OFF) | fires |
+| 2, 3, 5 (armed) | does not fire |
+
+Plus the existing cases: out of cruise (stepped descent) does not fire, TOD
+more than 60 nm away does not fire, landed does not fire.

@@ -205,8 +205,8 @@
           },
           {
             "dataref": "laminar/B738/autobrake/autobrake_pos",
-            "op": "eq",
-            "value": 0
+            "op": "lt",
+            "value": 2
           }
         ]
       },
