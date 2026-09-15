@@ -5550,18 +5550,47 @@
       "dataref_expression": "laminar/B738/tab/cg_pos:{laminar/B738/FMS/fmc_cg}-0.05|{laminar/B738/FMS/fmc_cg}+0.05",
       "role": "C",
       "auto_check_rule": {
-        "all": [
+        "any": [
           {
-            "dataref": "laminar/B738/tab/cg_pos",
-            "op": "gte",
-            "ref": "laminar/B738/FMS/fmc_cg",
-            "delta": -0.5
+            "all": [
+              {
+                "dataref": "laminar/B738/tab/cg_pos",
+                "op": "gt",
+                "value": 0
+              },
+              {
+                "dataref": "laminar/B738/tab/cg_pos",
+                "op": "gte",
+                "ref": "laminar/B738/FMS/fmc_cg",
+                "delta": -0.5
+              },
+              {
+                "dataref": "laminar/B738/tab/cg_pos",
+                "op": "lte",
+                "ref": "laminar/B738/FMS/fmc_cg",
+                "delta": 0.1
+              }
+            ]
           },
           {
-            "dataref": "laminar/B738/tab/cg_pos",
-            "op": "lte",
-            "ref": "laminar/B738/FMS/fmc_cg",
-            "delta": 0.1
+            "all": [
+              {
+                "dataref": "laminar/B738/tab/cg_pos",
+                "op": "lte",
+                "value": 0
+              },
+              {
+                "dataref": "laminar/B738/FMS/fmc_cg",
+                "op": "gt",
+                "value": 0
+              },
+              {
+                "dataref": "laminar/B738/FMS/fmc_cg",
+                "op": "abs_diff_lte",
+                "ref": "laminar/B738/fms/calc_to_cg",
+                "tolerance": 0.5
+              }
+            ]
           }
         ]
       },
