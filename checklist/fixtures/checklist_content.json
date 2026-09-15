@@ -1526,6 +1526,7 @@
       "role": "FO",
       "auto_check_rule": null,
       "attributes": [
+        3,
         4
       ]
     }
