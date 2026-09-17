@@ -1,3 +1,20 @@
+## v2.7.0 (2026-09-17)
+
+### Feat
+
+- **content**: set flaps at the hold in 0-10 °C conditions
+- **rules**: corridor geo-operator for intersection departures
+
+### Fix
+
+- **content**: fall back to calc_to_cg when the EFB leaves cg_pos at zero
+- **content**: mark the APU low oil pressure light as informational
+- **content**: correct the descent autobrake guard to lt 2
+- **content**: pin each transition rule to its own FMC line
+- **content**: auto-check DEP/ARR transitions on SEL or NONE
+- **content**: upsert and prune on import instead of wiping the tables
+- **content**: roll the content wipe back when the fixture load fails
+
 ## v2.6.0 (2026-09-12)
 
 ### Feat
