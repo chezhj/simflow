@@ -104,6 +104,14 @@ Users download from `https://github.com/chezhj/simflow/releases`.
 
 ### Steps
 
+> `cz bump` refuses to release when the fixture's content has changed but
+> `content_version` has not — `scripts/check_content_bump.py`, wired as commitizen's
+> `pre_bump_hooks`. It names the rows that moved and the commit that set the current
+> version. Because commitizen writes the version files before running the hook, an
+> abort leaves `pyproject.toml`, `smart_training_checklist/__init__.py` and
+> `CHANGELOG.md` modified but uncommitted and untagged; the message prints the
+> `git restore` line. Deliberate exception: `SIMFLOW_SKIP_CONTENT_CHECK=1 cz bump`.
+
 **1. Edit the fixture**
 
 Make your checklist changes directly in `checklist/fixtures/checklist_content.json`, then load them:

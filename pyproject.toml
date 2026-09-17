@@ -44,6 +44,15 @@ ignored_tag_formats = ["plugin-v*", "sop*"]
 version_files = [
     "smart_training_checklist/__init__.py",
 ]
+# Refuse the release when the fixture's content moved but content_version did not
+# — the same rule SOP_VERSIONING_SPEC.md plans to enforce at import time, caught
+# here instead, before a tag exists. Non-zero exit aborts the bump; commitizen has
+# written the version files by then but committed and tagged nothing, and the hook
+# prints the restore line. Override with SIMFLOW_SKIP_CONTENT_CHECK=1.
+pre_bump_hooks = [
+  "python scripts/check_content_bump.py",
+]
+
 # Run inline rather than calling a machine-local `push_all` script: that script
 # lived outside the repo, so when it stopped working the release silently pushed
 # the commit without the tag — and the tag is what triggers the deploy.

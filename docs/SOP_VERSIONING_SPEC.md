@@ -261,7 +261,10 @@ Ordered, each independently deployable:
 
 1. `00XX_sop_versioning_fields` — add `SOP.is_current`, `content_hash`,
    `created_at`; `Procedure.content_key`; `CheckItem.content_key`;
-   `FlightSession.sop` (nullable).
+   `FlightSession.sop` (nullable). Store `checklist/content_hash.py`'s
+   `content_hash()` in that field rather than defining a second hash: the pre-bump
+   guard (`scripts/check_content_bump.py`) already enforces this rule locally with
+   it, and two definitions of "the content" would eventually disagree.
 2. `00XX_backfill_sop_versioning` (RunPython) —
    `SOP.objects.update(is_current=True)` for the single existing row;
    `Procedure.content_key = slug`; `CheckItem.content_key = str(pk)`;
