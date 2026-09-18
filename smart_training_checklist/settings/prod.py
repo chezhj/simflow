@@ -2,6 +2,8 @@
 
 # pylint: disable=unused-wildcard-import,wildcard-import
 import os
+from pathlib import Path
+
 from decouple import config
 from .base import *
 
@@ -24,3 +26,71 @@ STATIC_ROOT = os.path.join(WWW_DIR, "static")
 STATIC_URL = "/static/"
 
 SIMBRIEF_URL = "https://www.simbrief.com/api/xml.fetcher.php?userid="
+
+
+# ── Security ──────────────────────────────────────────────────────────────── #
+#
+# The site is served over HTTPS only, so the cookies may as well be marked
+# Secure: the flag is about what the browser will send back, and the browser's
+# connection is already TLS regardless of what Passenger tells Django. These are
+# therefore safe to switch on without knowing how the front end terminates TLS.
+
+SESSION_COOKIE_SECURE = True
+CSRF_COOKIE_SECURE = True
+SECURE_CONTENT_TYPE_NOSNIFF = True
+SECURE_REFERRER_POLICY = "same-origin"
+
+# The two below are NOT safe to enable blind, so they are opt-in from .env.
+#
+# SECURE_SSL_REDIRECT sends anything Django considers insecure back as a 301 to
+# https. When Apache terminates TLS and hands Passenger a plain HTTP request
+# without a proxy header Django can read, every request looks insecure and the
+# redirect loops — the site goes down, and it goes down for everyone at once.
+# Confirm the scheme first (log request.is_secure() on a live request, or set
+# SECURE_PROXY_SSL_HEADER below to match whatever Apache actually forwards),
+# then set SECURE_SSL_REDIRECT=True in the server's .env.
+#
+# SECURE_HSTS_SECONDS tells browsers to refuse plain HTTP for that long, and
+# they honour it even if the certificate later lapses or the app moves. Ramp it:
+# 3600, then a day, then a week, and only then a year. Do not add
+# includeSubDomains until every host under vdwaal.net is HTTPS.
+SECURE_SSL_REDIRECT = config("SECURE_SSL_REDIRECT", default=False, cast=bool)
+SECURE_HSTS_SECONDS = config("SECURE_HSTS_SECONDS", default=0, cast=int)
+
+# Uncomment once it is confirmed that Apache forwards this exact header.
+# SECURE_PROXY_SSL_HEADER = ("HTTP_X_FORWARDED_PROTO", "https")
+
+
+# ── Error visibility ──────────────────────────────────────────────────────── #
+#
+# With DEBUG=False and no LOGGING block, Django's default config routes
+# django.request errors to mail_admins only — and ADMINS is empty, so every
+# 500 the app serves is discarded without a trace. Write them to a file the
+# server keeps instead, so a user reporting "it broke" can be matched to a
+# stack trace. logs/ is created by the app at runtime and is gitignored.
+_LOG_DIR = Path(BASE_DIR) / "logs"
+_LOG_DIR.mkdir(exist_ok=True)
+
+LOGGING = {
+    "version": 1,
+    "disable_existing_loggers": False,
+    "formatters": {
+        "verbose": {
+            "format": "{asctime} {levelname} {name} {message}",
+            "style": "{",
+        },
+    },
+    "handlers": {
+        "file": {
+            "class": "logging.handlers.RotatingFileHandler",
+            "filename": str(_LOG_DIR / "django.log"),
+            "maxBytes": 5 * 1024 * 1024,
+            "backupCount": 3,
+            "formatter": "verbose",
+        },
+    },
+    "loggers": {
+        "django.request": {"handlers": ["file"], "level": "ERROR", "propagate": False},
+        "checklist": {"handlers": ["file"], "level": "INFO", "propagate": False},
+    },
+}

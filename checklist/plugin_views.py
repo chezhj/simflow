@@ -107,6 +107,15 @@ def require_api_key(view_func):
     Authorization: Bearer <raw_key> header and attaches it to
     request.plugin_profile. Returns 401 if the key is missing or invalid.
 
+    Candidates are narrowed by api_key_prefix (the first 8 characters of the
+    raw key, stored alongside the hash by generate_api_key) before any hash is
+    verified. check_password runs a deliberately slow KDF — ~200 ms per call —
+    so scanning every stored key would make each plugin request cost
+    users x 200 ms. The plugin POSTs state at 1 Hz per active pilot, so that
+    scan saturates the server at a couple of dozen accounts. The prefix is a
+    non-secret index, not a credential: a match still has to clear
+    check_password against the full key.
+
     Also applies @csrf_exempt — plugin requests have no CSRF token.
     """
     @functools.wraps(view_func)
@@ -115,7 +124,13 @@ def require_api_key(view_func):
         auth = request.headers.get("Authorization", "")
         if auth.startswith("Bearer "):
             raw_key = auth[7:]
-            for profile in UserProfile.objects.exclude(api_key_hash=None):
+            prefix = raw_key[:8]
+            # Prefixes are not unique by construction (4 random characters after
+            # "fvw_"), so this stays a loop — it is just a very short one.
+            candidates = UserProfile.objects.filter(
+                api_key_prefix=prefix
+            ).exclude(api_key_hash=None)
+            for profile in candidates:
                 if check_password(raw_key, profile.api_key_hash):
                     request.plugin_profile = profile
                     return view_func(request, *args, **kwargs)
