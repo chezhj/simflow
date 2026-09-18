@@ -216,26 +216,31 @@ Four existing tests posted an empty email while asserting some *other* failure.
 Two would have started passing for the wrong reason and two would have broken
 outright, so each now sends a valid address.
 
-### [ ] 2.2b **[server]** Set the mail variables in `.env`
+### [x] 2.2b **[server]** Set the mail variables in `.env` — DONE
 
-**`EMAIL_HOST` deliberately keeps Django's own `localhost` default** rather than
-being mandatory — a required setting would take the site down on the first
-deploy where `.env` had not been updated, trading a broken reset flow for a
-broken site. So it must be set **before** the release carrying this change is
-activated:
+`EMAIL_HOST_USER`, `EMAIL_HOST_PASSWORD` and `FROM_EMAIL` are set, which is what
+the other apps on this server use. **That is now enough**, but only after a fix:
+the settings as first written would have failed silently.
 
-```ini
-EMAIL_HOST=<cPanel mail host>
-EMAIL_PORT=587
-EMAIL_HOST_USER=<mailbox>
-EMAIL_HOST_PASSWORD=<password>
-EMAIL_USE_TLS=True
-DEFAULT_FROM_EMAIL=SimFlow <noreply@simflow.vdwaal.net>
-```
+| Setting | I had written | Django's default | Now |
+|---|---|---|---|
+| `EMAIL_PORT` | 587 | **25** | 25 |
+| `EMAIL_USE_TLS` | True | **False** | False |
+| from-address key | `DEFAULT_FROM_EMAIL` | — | `DEFAULT_FROM_EMAIL`, falling back to **`FROM_EMAIL`** |
 
-Use port 465 with `EMAIL_USE_SSL=True` and `EMAIL_USE_TLS=False` if the host
-offers implicit TLS instead of STARTTLS. Check in cPanel under
-**Email Accounts → Connect Devices**.
+The other apps work on three variables because they run on Django's defaults —
+the cPanel host's local Exim on `localhost:25`, which accepts mailbox
+credentials. Sending to `localhost:587` with STARTTLS would simply not have
+arrived, with nothing in the `.env` to explain why. And the from-address was
+read under a name the `.env` does not use, so it would have fallen through to
+the hardcoded default.
+
+Every default now matches Django's exactly, so this app behaves like its
+neighbours. `EMAIL_TIMEOUT=10` is the one deliberate departure — Django ships no
+timeout, and a black-holed host would hold a Passenger worker open forever.
+
+`.env.example` now documents every variable the app reads and which three
+actually matter.
 
 ### [ ] 2.3 **[verify]** End-to-end reset on production
 
