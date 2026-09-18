@@ -51,122 +51,126 @@ explicitly on each step.
 
 ---
 
-## Phase 0 — Checks before anything ships
+## Phase 0 — Checks before anything ships — ✅ COMPLETE
 
-These gate later decisions. None of them change anything. Run them all, record
-the answers here, then we plan around the results.
+Answers recorded 2026-09-18.
 
-### [ ] 0.1 **[server]** Filesystem type — SQLite vs MySQL
+| | Check | Answer | Consequence |
+|---|---|---|---|
+| [x] | 0.1 Filesystem | **XFS** | SQLite stays. Phase 4 proceeds as written; no MySQL migration. |
+| [x] | 0.2 Backup method | **Plain copy** | WAL blocked until `activate.sh` uses the backup API. Spec below. |
+| [x] | 0.3 `is_secure()` | **True** (inferred, see below) | 6.2 is safe; `SECURE_PROXY_SSL_HEADER` not needed. |
+| [x] | 0.4 Outbound mail | **Available** | 2.2 proceeds; SMTP details needed at that step. |
+| [x] | 0.5 Writable release dir | **Confirmed** | The `LOGGING` block already pushed cannot break the boot. |
+| [x] | 0.6 Baseline | **0.31 s median** | Lower than predicted. Revises 3.1 — see below. |
 
-```bash
-stat -f -c %T ~
-df -T ~ | tail -1
-```
+### 0.2 result — exact backup specification
 
-| Answer | Consequence |
-|---|---|
-| `ext2/ext3`, `ext4`, `xfs`, `btrfs` | Stay on SQLite. Phase 4 proceeds as written. |
-| `nfs`, `nfs4`, or anything network | **Stop.** SQLite's advisory locking over NFS is unreliable — that is corruption, not slowness. Phase 4 is replaced by a MySQL migration, and it becomes a launch blocker regardless of user count. |
+`activate.sh` currently copies `db.sqlite3` as a plain file. That is safe today
+(rollback journal mode keeps the file self-contained between transactions) but
+becomes **unsafe the moment WAL is enabled**: recent commits live in the `-wal`
+sidecar, and a plain copy silently omits them. Copying the `-wal` and `-shm`
+files alongside is *not* a fix — there is no way to copy all three atomically
+while the app is writing, so the result can be inconsistent.
 
-### [ ] 0.2 **[server]** How `activate.sh` backs up the database
+Use SQLite's Online Backup API, which reads through a real connection and
+therefore includes WAL content, and produces one consistent file even while the
+app is running.
 
-`activate.sh` lives in [`www_installer`](https://github.com/chezhj/www_installer)
-and is not visible from this repo. Find the backup command:
-
-```bash
-grep -n -A5 -i 'backup\|cp .*db.sqlite3\|sqlite3' ~/deploy-tools/scripts/activate.sh
-```
-
-**Why it matters**: a WAL-mode database keeps recent commits in a `-wal` sidecar
-file. A plain `cp db.sqlite3 backup.sqlite3` can silently produce a backup
-missing the most recent transactions. If the backup is a plain copy, WAL (step
-4.1) must not be enabled until it is changed to either checkpoint first
-(`PRAGMA wal_checkpoint(TRUNCATE)`) or use `sqlite3 db.sqlite3 ".backup ..."` /
-`VACUUM INTO`.
-
-### [ ] 0.3 **[server]** Does Django see requests as HTTPS?
-
-Gates `SECURE_SSL_REDIRECT` (step 6.2). If Apache terminates TLS and hands
-Passenger a plain HTTP request that Django cannot recognise as secure, enabling
-the redirect produces an infinite loop and takes the whole site down at once.
+**This change belongs in the [`www_installer`](https://github.com/chezhj/www_installer)
+repo, not this one.** Drop-in replacement for the copy step:
 
 ```bash
-cd ~/domains/simflow_current  # adjust to the live release path
-source /home/vdwanet/virtualenv/domains/simflow.vdwaal.net/3.11/bin/activate
-python - <<'EOF'
-import os, django
-os.environ.setdefault("DJANGO_SETTINGS_MODULE", "smart_training_checklist.settings.prod")
-django.setup()
-from django.test import RequestFactory
-print("check which of these Apache actually sets, on a real request")
-EOF
+# --- SQLite backup (replaces: cp "$DB" "$DEST") ---
+# Consistent even while the app is writing, and WAL-safe.
+# Requires the sqlite3 CLI (any version since 3.6.11).
+backup_sqlite() {
+  local db="$1" dest="$2"
+
+  if ! command -v sqlite3 >/dev/null 2>&1; then
+    echo "ERROR: sqlite3 CLI not found - cannot take a consistent backup" >&2
+    return 1
+  fi
+
+  # .timeout makes the backup wait for a concurrent writer instead of failing
+  # with SQLITE_BUSY. 30s is generous; the app's writes are single-digit ms.
+  if ! sqlite3 "$db" <<SQL
+.timeout 30000
+.backup '$dest'
+SQL
+  then
+    echo "ERROR: sqlite3 .backup failed for $db" >&2
+    return 1
+  fi
+
+  # Never trust a backup that has not been read back.
+  local check
+  check=$(sqlite3 "$dest" 'PRAGMA integrity_check;' 2>&1)
+  if [ "$check" != "ok" ]; then
+    echo "ERROR: backup failed integrity_check: $check" >&2
+    rm -f "$dest"
+    return 1
+  fi
+
+  echo "backup ok: $dest ($(stat -c %s "$dest") bytes)"
+}
 ```
 
-Simpler and more reliable — log it from a live request. Temporarily add to any
-view, hit the site over HTTPS, then read `logs/django.log`:
+Notes:
 
-```python
-logger.error("is_secure=%s scheme=%s xfp=%r",
-             request.is_secure(), request.scheme,
-             request.META.get("HTTP_X_FORWARDED_PROTO"))
-```
+- The heredoc form avoids shell-quoting problems with the destination path.
+  `.backup` takes the target filename; quote it inside the SQL as shown.
+- `sqlite3` follows symlinks, so pointing it at the release-tree symlink into
+  `shared/simflow/db.sqlite3` works unchanged.
+- `VACUUM INTO '<dest>'` is an equivalent one-liner (SQLite 3.27+, 2019) and also
+  defragments. It holds a read lock for the whole operation, whereas `.backup`
+  yields between pages — prefer `.backup` for a live database.
+- A restored backup is a normal database file. Its journal mode is whatever the
+  destination defaults to, which does not matter: step 4.1's `init_command` sets
+  WAL on every connection.
+- **Verify once before trusting it** (step 4.2): take a backup, restore it to a
+  scratch path, open it, and confirm the most recent writes are present.
 
-| Answer | Consequence |
-|---|---|
-| `is_secure=True` | Safe to enable `SECURE_SSL_REDIRECT`. |
-| `is_secure=False`, `xfp='https'` | Set `SECURE_PROXY_SSL_HEADER` (already stubbed in `prod.py`), *then* enable the redirect. |
-| `is_secure=False`, no header | Do not enable the redirect. Investigate the Apache config first. |
+### 0.3 result — how it was established
 
-### [ ] 0.4 **[server]** Outbound mail
+The probe script in the original plan was a stub that printed a message and
+tested nothing. The question is answerable without deploying anything:
 
-Gates the password-reset fix (step 2.2).
+Django's CSRF middleware builds the origin it expects from `request.is_secure()`
+(`CsrfViewMiddleware._origin_verified`: `"https" if request.is_secure() else
+"http"`, plus `request.get_host()`). Browsers send an `Origin` header on POST.
+There is no `CSRF_TRUSTED_ORIGINS` in the settings. So if Django believed these
+requests were plain HTTP, **every form POST on the live site would already be
+failing** with "Origin checking failed — https://simflow.vdwaal.net does not
+match any trusted origins".
 
-```bash
-# Is there a local MTA?
-command -v sendmail; ls -la /usr/sbin/sendmail 2>/dev/null
-# Does cPanel offer SMTP credentials for this domain? (check the cPanel UI:
-# Email Accounts → Connect Devices for host/port/auth)
-```
+Logging in on production works, therefore `is_secure()` is already `True`,
+therefore `SECURE_PROXY_SSL_HEADER` is unnecessary and `SECURE_SSL_REDIRECT`
+(6.2) will not loop.
 
-Record: SMTP host, port, whether auth is required, and which From address the
-host will accept without it being marked as spam.
+> Confirm by logging in on production once more before enabling 6.2. If login
+> ever starts returning a CSRF failure page, that inference has broken and 6.2
+> must be reverted.
 
-### [ ] 0.5 **[verify]** Release directory is writable by the app user
+### 0.6 result — measured 0.31 s, not the predicted 0.6–0.8 s
 
-Confirms the new `LOGGING` block cannot break the boot.
+The 601 ms I measured for `check_password` was on this build container, which is
+**2.3x slower per core** than the production host. Working back from the measured
+round trip (0.31 s total, ~45 ms of it network), PBKDF2 on the production
+hardware costs **~265 ms**, not 601 ms.
 
-```bash
-cd ~/domains/simflow_current && touch ./_writetest && rm ./_writetest && echo WRITABLE
-```
+What that changes, and what it does not:
 
-If it is not writable, the fix is to point `_LOG_DIR` at `~/domains/shared/simflow/logs`
-(which also makes logs survive deploys, a bonus) rather than the release tree.
+| | Predicted | Actual |
+|---|---|---|
+| Share of perceived GUI latency | ~⅓ | **~17%** (265 ms of a ~1560 ms average) |
+| CPU per flying pilot at 1 Hz | 60% of a core | **26% of a core** |
+| Concurrent pilots to saturate one core | 1.7 | **3.8** |
 
-### [ ] 0.6 **[server]** Baseline measurement — before changing anything
+**Step 3.1 is therefore re-framed from a latency fix to a capacity fix.** See the
+revised step for the decision.
 
-So that every later change can be shown to have helped. With a valid API key:
-
-```bash
-KEY="fvw_..."   # from the SimFlow profile page
-for i in $(seq 1 10); do
-  curl -s -o /dev/null -w '%{time_total}\n' \
-    -X POST https://simflow.vdwaal.net/api/plugin/state/ \
-    -H "Authorization: Bearer $KEY" \
-    -H 'Content-Type: application/json' \
-    -d '{"session_id": 1, "datarefs": {}}'
-done
-```
-
-Record the median. Expect roughly **0.6–0.8 s** — dominated by PBKDF2, not by
-network or database. This is the number step 3.1 should collapse.
-
-### 🚦 Gate 0
-
-Report the six answers. Two of them can change the shape of the rest of the
-plan (0.1 → MySQL; 0.2 → WAL blocked), so we re-plan here if needed before any
-code ships.
-
----
+### 🚦 Gate 0 — passed
 
 ## Phase 1 — Security blockers
 
@@ -258,40 +262,66 @@ This is the phase that fixes "feels laggy". Measured budget today:
 |---|---|---|
 | Wait for next flight-loop tick (1 Hz) | 500 ms | 1000 ms |
 | Read datarefs + spawn thread | ~2 ms | ~3 ms |
-| Network round trip | 30–80 ms | 150 ms |
-| **Server: PBKDF2 on the API key** | **600 ms** | **600 ms** |
+| Network round trip | ~45 ms | 150 ms |
+| **Server: PBKDF2 on the API key** | **265 ms** | **530 ms** (2 accounts, O(n) scan) |
 | Server: UPDATE + rule evaluation | 5–20 ms | 50 ms |
 | Wait for next browser poll (1.5 Hz) | 750 ms | 1500 ms |
-| **Total** | **~1.9 s** | **~3.3 s** |
+| **Total** | **~1.56 s** | **~3.2 s** |
+
+Measured against production in step 0.6 (0.31 s median for the POST). The two
+polling waits are **80% of it** — which is why 3.2 and 3.5 matter more for
+perceived responsiveness than 3.1 does.
 
 Do these **in order**, re-running the 0.6 measurement after each, so each
 change's effect is attributable.
 
-### [ ] 3.1 **[code]** Replace PBKDF2 with SHA-256 for API keys
+### [ ] 3.1 **[decide + code]** Replace PBKDF2 with SHA-256 for API keys
 
-**The single biggest win — for latency and for capacity.**
+**Re-framed after 0.6: this is a capacity fix, not a latency fix.** On the real
+hardware PBKDF2 costs ~265 ms, which is only ~17% of perceived GUI latency. It
+is still 26% of a CPU core per flying pilot.
 
-`generate_api_key` mints `secrets.token_urlsafe(32)` — 256 bits of CSPRNG
-output. A slow KDF exists to make *low-entropy, human-chosen* passwords
-expensive to brute-force offline. A 256-bit random token has no brute-force
-surface, so the 600 ms buys nothing. Measured here: **601 ms vs 0.7 µs**.
+**What must ship regardless**: the prefix-narrowed lookup already on this branch.
+Production still runs the O(n) scan from v2.7.0, which at today's two accounts
+costs ~0.53 s per plugin request and scales linearly:
 
-Consequences:
-- ~600 ms off every plugin round trip (about a third of the perceived lag).
-- Server CPU per flying pilot drops from **60% of one core** to ~0. Right now
-  **1.7 concurrent pilots saturate a core** — that, not SQLite, is the real
-  ceiling on a CloudLinux LVE.
-- An indexed exact-match lookup replaces the prefix scan entirely.
+| Accounts with keys | Per plugin request, deployed code |
+|---|---|
+| 2 (today) | 0.53 s |
+| 10 | 2.65 s |
+| 25 | 6.62 s |
+| 50 | 13.25 s |
+
+The plugin posts every second, so past a handful of accounts the backlog
+compounds rather than settling. **That alone makes releasing this branch a
+blocker**, independent of the decision below.
+
+**The decision**: with the prefix fix alone, each plugin request costs one
+~265 ms hash — **3.8 concurrent pilots saturate one CPU core**. On a CloudLinux
+LVE (commonly capped at 100–200% CPU) that cap is reachable on a weekend evening
+with 50 registered users, and when it is hit the host throttles *everything*, not
+just the plugin endpoint.
+
+| Option | Ceiling | Cost |
+|---|---|---|
+| **(a) Prefix fix only** | ~4 concurrent pilots per core | Already done |
+| **(b) + SHA-256** (recommended) | No meaningful ceiling | Migration + lazy upgrade |
+
+Recommend **(b)**. `generate_api_key` mints `secrets.token_urlsafe(32)` — 256
+bits of CSPRNG output. A slow KDF exists to make *low-entropy, human-chosen*
+passwords expensive to brute-force offline; a 256-bit random token has no
+brute-force surface, so the 265 ms buys nothing. This is what DRF's token auth
+and GitHub PATs do.
 
 Design:
 - Add `api_key_sha256 = CharField(max_length=64, null=True, db_index=True)`.
 - Store `hashlib.sha256(raw.encode()).hexdigest()`; compare with
   `hmac.compare_digest`.
 - **Lazy migration, no user disruption**: look up by SHA-256 first. On a miss,
-  fall back to the existing prefix-narrowed PBKDF2 path; on a successful
-  fallback the raw key is in hand, so write the SHA-256 then. The first request
-  after deploy costs 600 ms, every one after that is instant. Same pattern
-  Django uses to upgrade password hashers on login.
+  fall back to the prefix-narrowed PBKDF2 path; a successful fallback has the raw
+  key in hand, so write the SHA-256 then. First request after deploy costs
+  265 ms, every one after is instant. Same pattern Django uses to upgrade
+  password hashers on login.
 - Keep `api_key_prefix` — the profile page displays it
   (`registration/profile.html:123`).
 - Keep `api_key_hash` and the fallback for one release, then remove both.
@@ -299,6 +329,12 @@ Design:
 Tests: SHA-256 path resolves; legacy PBKDF2 key still authenticates; legacy key
 is upgraded in place after first use; unknown key 401s without hashing; the
 existing flat-cost test still passes.
+
+> **Lighter alternative if you want no migration before launch**: a per-worker
+> in-memory cache of `sha256(raw_key) → profile_id` with a short TTL. ~15 lines,
+> no schema change, keeps PBKDF2 as the source of truth. The tradeoff is that a
+> revoked key keeps working until its TTL expires. Mentioned for completeness;
+> (b) is cleaner and has no revocation lag.
 
 ### [ ] 3.2 **[code]** `POLL_INTERVAL_MS` 1500 → 750
 
