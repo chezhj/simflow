@@ -172,85 +172,82 @@ revised step for the decision.
 
 ### 🚦 Gate 0 — passed
 
-## Phase 1 — Security blockers
+## Phase 1 — Security blockers — ✅ COMPLETE
 
-Independent of Phase 0. Can start immediately.
+| | Step | Result |
+|---|---|---|
+| [x] | 1.1 Rotate the two account passwords | Done on production. |
+| [x] | 1.2 Stop tracking `db.sqlite3` | Untracked and gitignored. History deliberately left alone — purging it means a force-push on a public repo to scrub two hashes whose passwords are already changed. |
+| [x] | 1.3 Confirm no other secrets tracked | Clean. No `.env` tracked; the only name matches were password-reset *template* files. The `.env` rule was broadened: only `settings/.env` was ignored, but python-decouple also searches the repo root, so a root `.env` had been committable. |
 
-### [ ] 1.1 **[decide + server]** Rotate the two account passwords
+> **Follow-on for 7.1**: with `db.sqlite3` untracked, a fresh clone has no
+> database. The README must document the bootstrap — `migrate`, then
+> `checklist_content import`.
 
-`db.sqlite3` is committed to a **public** repo and carries the `admin` and `hjw`
-password hashes. `/admin/` is live and unthrottled.
-
-- Change both passwords on production now (`manage.py changepassword <user>`).
-- Assume the old ones are compromised and do not reuse them anywhere.
-
-### [ ] 1.2 **[code]** Stop tracking `db.sqlite3`
-
-`checklist/fixtures/checklist_content.json` is the content source of truth and
-production symlinks its own database, so the committed file is redundant as well
-as a disclosure.
-
-```
-git rm --cached db.sqlite3
-echo 'db.sqlite3' >> .gitignore
-```
-
-**Note**: this removes it from future commits, not from history. Purging history
-means a force-push and rewritten hashes on a public repo. Given the content is
-two accounts whose passwords 1.1 has already rotated, **the recommendation is to
-leave history alone** — the cost and breakage outweigh the residual risk. Your
-call; flag it if you want the rewrite.
-
-### [ ] 1.3 **[verify]** Confirm no other secrets are tracked
-
-```bash
-git ls-files | grep -iE '\.env|secret|credential|\.key|\.pem'
-git log --all --oneline -S 'SECRET_KEY' -- smart_training_checklist/ | head
-```
-
-### 🚦 Gate 1
-Passwords rotated, database untracked, tests still green.
+### 🚦 Gate 1 — passed
 
 ---
 
 ## Phase 2 — Correctness blockers
 
-### [ ] 2.1 **[code]** Delete the stale `requirements.txt`
+| | Step | Result |
+|---|---|---|
+| [x] | 2.1 Delete the stale `requirements.txt` | Deleted and gitignored. Verified safe first: the `ship` job regenerates it from `poetry.lock` **before** the rsync, and the rsync does not exclude it, so the server always receives a correct one. |
+| [x] | 2.2 Make password reset work — *code* | `prod.py` reads the `EMAIL_*` settings from `.env`; registration now requires an email address. |
+| [ ] | 2.2b **[server]** Fill in `.env` | **Outstanding — see below.** |
+| [ ] | 2.3 **[verify]** End-to-end reset on production | Blocked on 2.2b. |
 
-A UTF-16 file from 2023 pinning **Django 4.1** (EOL December 2023). Production
-is unaffected — the deploy regenerates it from `poetry.lock` (5.2.1) and CI uses
-`poetry install` — but anyone cloning the repo and running `pip install -r
-requirements.txt` gets a four-year-old Django. It is also what made my own first
-test run measure the wrong numbers.
+### 2.2 — what shipped
 
-Delete it; the release workflow writes a correct one as a release asset.
+- `EMAIL_BACKEND`, `EMAIL_HOST`, `EMAIL_PORT`, `EMAIL_HOST_USER`,
+  `EMAIL_HOST_PASSWORD`, `EMAIL_USE_TLS`, `EMAIL_USE_SSL`,
+  `DEFAULT_FROM_EMAIL`, `SERVER_EMAIL` — all from `.env`.
+- `EMAIL_TIMEOUT=10`. Django ships **no** default, so a black-holed SMTP host
+  holds a Passenger worker open indefinitely; a few reset requests against a
+  dead mail server would take the site down.
+- Registration requires an email (option (a)). Both existing accounts already
+  have one, so nothing to backfill.
+- Tests: rejected without an email and with a malformed one; address is stored;
+  a reset delivers a message from the configured sender; the link in it actually
+  resets the password; an unknown address sends nothing but returns the same
+  response as a hit.
 
-### [ ] 2.2 **[code]** Make password reset work — *depends on 0.4*
+Four existing tests posted an empty email while asserting some *other* failure.
+Two would have started passing for the wrong reason and two would have broken
+outright, so each now sends a valid address.
 
-The reset flow is fully wired (`checklist/auth_urls.py`) but no `EMAIL_BACKEND`
-or SMTP settings exist in `prod.py` or `base.py`. Django falls back to
-localhost:25, so the view 500s. Two parts:
+### [ ] 2.2b **[server]** Set the mail variables in `.env`
 
-1. Configure SMTP in `prod.py` from `.env` (`EMAIL_HOST`, `EMAIL_PORT`,
-   `EMAIL_HOST_USER`, `EMAIL_HOST_PASSWORD`, `EMAIL_USE_TLS`,
-   `DEFAULT_FROM_EMAIL`), per 0.4's answers.
-2. **[decide]** `email` is currently optional at registration
-   (`auth_views.py:74`), so those users have *no* recovery path at all. Options:
-   - **(a) Make it required** — recommended. One-line form change, plus a
-     migration plan for existing accounts without one.
-   - **(b) Leave optional, warn at registration** — "without an email address
-     you cannot recover this account."
+**`EMAIL_HOST` deliberately keeps Django's own `localhost` default** rather than
+being mandatory — a required setting would take the site down on the first
+deploy where `.env` had not been updated, trading a broken reset flow for a
+broken site. So it must be set **before** the release carrying this change is
+activated:
 
-   Recommend **(a)** for a public launch: option (b) generates support requests
-   you cannot resolve.
+```ini
+EMAIL_HOST=<cPanel mail host>
+EMAIL_PORT=587
+EMAIL_HOST_USER=<mailbox>
+EMAIL_HOST_PASSWORD=<password>
+EMAIL_USE_TLS=True
+DEFAULT_FROM_EMAIL=SimFlow <noreply@simflow.vdwaal.net>
+```
+
+Use port 465 with `EMAIL_USE_SSL=True` and `EMAIL_USE_TLS=False` if the host
+offers implicit TLS instead of STARTTLS. Check in cPanel under
+**Email Accounts → Connect Devices**.
 
 ### [ ] 2.3 **[verify]** End-to-end reset on production
 
-Register a throwaway account, request a reset, confirm the mail arrives and the
-link works. Then delete the account.
+Register a throwaway account, request a reset, confirm the mail arrives (check
+spam — a new sending domain often lands there) and the link works. Delete the
+account afterwards.
 
-### 🚦 Gate 2
-Reset works end to end on the live site.
+> If mail lands in spam, SPF and DKIM for `simflow.vdwaal.net` are the next
+> thing to check in cPanel. Not a blocker, but a reset users never see is the
+> same as no reset.
+
+### 🚦 Gate 2 — blocked on 2.2b and 2.3
 
 ---
 
