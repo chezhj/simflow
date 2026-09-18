@@ -3,8 +3,11 @@
 # pylint: disable=missing-class-docstring
 # pylint: disable=missing-function-docstring
 
+import re
+
 from django.contrib.auth.models import User
-from django.test import TestCase
+from django.core import mail
+from django.test import TestCase, override_settings
 from django.urls import reverse
 
 
@@ -35,7 +38,7 @@ class TestRegisterView(TestCase):
             reverse("register"),
             {
                 "username": "testpilot",
-                "email": "",
+                "email": "test@example.com",
                 "password1": "Securepass123!",
                 "password2": "Securepass123!",
             },
@@ -48,7 +51,7 @@ class TestRegisterView(TestCase):
             reverse("register"),
             {
                 "username": "newpilot",
-                "email": "",
+                "email": "test@example.com",
                 "password1": "Securepass123!",
                 "password2": "Wrongpass456!",
             },
@@ -119,7 +122,7 @@ class TestRegisterViewWithSimBriefId(TestCase):
             reverse("register"),
             {
                 "username": "pilot",
-                "email": "",
+                "email": "pilot@example.com",
                 "password1": "Securepass123!",
                 "password2": "Securepass123!",
                 "simbrief_id": "784213",
@@ -133,7 +136,7 @@ class TestRegisterViewWithSimBriefId(TestCase):
             reverse("register"),
             {
                 "username": "pilot",
-                "email": "",
+                "email": "pilot@example.com",
                 "password1": "Securepass123!",
                 "password2": "Securepass123!",
             },
@@ -335,3 +338,101 @@ class TestDeleteAccountView(TestCase):
         self.client.force_login(self.user)
         response = self.client.post(self.url, {"password": "wrongpassword"})
         self.assertIn("password", response.context["form"].errors)
+
+
+class TestRegistrationRequiresEmail(TestCase):
+    """
+    Email is the only account-recovery channel. An account without one can never
+    reset its password, so registration must not create one.
+    """
+
+    def test_register_without_email_is_rejected(self):
+        response = self.client.post(
+            reverse("register"),
+            {
+                "username": "noemail",
+                "email": "",
+                "password1": "Securepass123!",
+                "password2": "Securepass123!",
+            },
+        )
+        self.assertEqual(response.status_code, 200)
+        self.assertFormError(
+            response.context["form"], "email", "This field is required."
+        )
+        self.assertFalse(User.objects.filter(username="noemail").exists())
+
+    def test_register_with_malformed_email_is_rejected(self):
+        response = self.client.post(
+            reverse("register"),
+            {
+                "username": "badmail",
+                "email": "not-an-address",
+                "password1": "Securepass123!",
+                "password2": "Securepass123!",
+            },
+        )
+        self.assertEqual(response.status_code, 200)
+        self.assertFalse(User.objects.filter(username="badmail").exists())
+
+    def test_registered_email_is_stored_on_the_user(self):
+        self.client.post(
+            reverse("register"),
+            {
+                "username": "pilot",
+                "email": "pilot@example.com",
+                "password1": "Securepass123!",
+                "password2": "Securepass123!",
+            },
+        )
+        self.assertEqual(User.objects.get(username="pilot").email, "pilot@example.com")
+
+
+@override_settings(
+    EMAIL_BACKEND="django.core.mail.backends.locmem.EmailBackend",
+    DEFAULT_FROM_EMAIL="SimFlow <noreply@example.com>",
+)
+class TestPasswordResetDelivery(TestCase):
+    """
+    The reset flow was fully routed but production had no mail configuration, so
+    Django fell back to SMTP on localhost:25 and the view 500'd. These lock down
+    that a reset request actually produces a message with a usable link.
+    """
+
+    def setUp(self):
+        self.user = User.objects.create_user(
+            username="pilot", email="pilot@example.com", password="Securepass123!"
+        )
+
+    def test_reset_request_sends_a_message_to_the_account(self):
+        response = self.client.post(
+            reverse("password_reset"), {"email": "pilot@example.com"}
+        )
+        self.assertEqual(response.status_code, 302)
+        self.assertEqual(len(mail.outbox), 1)
+        self.assertEqual(mail.outbox[0].to, ["pilot@example.com"])
+        self.assertEqual(mail.outbox[0].from_email, "SimFlow <noreply@example.com>")
+
+    def test_reset_message_carries_a_working_link(self):
+        self.client.post(reverse("password_reset"), {"email": "pilot@example.com"})
+        body = mail.outbox[0].body
+        match = re.search(r"/password-reset/([\w-]+)/([\w-]+)/", body)
+        self.assertIsNotNone(match, f"no reset link found in:\n{body}")
+
+        # Django's reset view swaps the token for a one-time redirect before it
+        # will accept a new password, so follow it rather than POSTing directly.
+        response = self.client.get(match.group(0), follow=True)
+        self.assertEqual(response.status_code, 200)
+        response = self.client.post(
+            response.redirect_chain[-1][0] if response.redirect_chain else match.group(0),
+            {"new_password1": "Brandnewpass456!", "new_password2": "Brandnewpass456!"},
+        )
+        self.user.refresh_from_db()
+        self.assertTrue(self.user.check_password("Brandnewpass456!"))
+
+    def test_unknown_address_sends_nothing_but_does_not_leak_that(self):
+        response = self.client.post(
+            reverse("password_reset"), {"email": "nobody@example.com"}
+        )
+        self.assertEqual(response.status_code, 302)  # same response as a hit
+        self.assertEqual(len(mail.outbox), 0)

@@ -94,3 +94,32 @@ LOGGING = {
         "checklist": {"handlers": ["file"], "level": "INFO", "propagate": False},
     },
 }
+
+
+# ── Outbound mail ─────────────────────────────────────────────────────────── #
+#
+# Django's default is the SMTP backend pointed at localhost:25. With no MTA
+# there, PasswordResetForm.save() raises and the reset view returns a 500 — so
+# the whole recovery flow was wired up but dead. Configure the real host here.
+#
+# NOTE: EMAIL_HOST must be set in the server's .env BEFORE the release carrying
+# this change is activated. The default below reproduces Django's own default,
+# so an unset value fails exactly the way it does today rather than breaking the
+# boot — but it does not work either.
+EMAIL_BACKEND = "django.core.mail.backends.smtp.EmailBackend"
+EMAIL_HOST = config("EMAIL_HOST", default="localhost")
+EMAIL_PORT = config("EMAIL_PORT", default=587, cast=int)
+EMAIL_HOST_USER = config("EMAIL_HOST_USER", default="")
+EMAIL_HOST_PASSWORD = config("EMAIL_HOST_PASSWORD", default="")
+EMAIL_USE_TLS = config("EMAIL_USE_TLS", default=True, cast=bool)
+EMAIL_USE_SSL = config("EMAIL_USE_SSL", default=False, cast=bool)
+
+# Django ships no default timeout, so a black-holed SMTP host holds the worker
+# open indefinitely. Under Passenger with a handful of workers, a few reset
+# requests against a dead mail server would take the site down. Bound it.
+EMAIL_TIMEOUT = config("EMAIL_TIMEOUT", default=10, cast=int)
+
+DEFAULT_FROM_EMAIL = config(
+    "DEFAULT_FROM_EMAIL", default="SimFlow <noreply@simflow.vdwaal.net>"
+)
+SERVER_EMAIL = DEFAULT_FROM_EMAIL

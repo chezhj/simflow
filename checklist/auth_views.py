@@ -72,7 +72,14 @@ class StyledPasswordChangeForm(PasswordChangeForm):
 # ── Registration ──────────────────────────────────────────────────────────────
 
 class RegisterForm(UserCreationForm):
-    email = forms.EmailField(required=False, widget=forms.EmailInput(attrs=_INPUT))
+    # Required, because it is the only account-recovery channel there is. An
+    # account registered without one cannot ever reset its password, and the
+    # resulting support request is not one we can resolve.
+    email = forms.EmailField(
+        required=True,
+        widget=forms.EmailInput(attrs=_INPUT),
+        help_text="Used only for password recovery.",
+    )
     simbrief_id = forms.CharField(
         max_length=20,
         required=False,

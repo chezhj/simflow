@@ -20,6 +20,7 @@
 
             <label class="auth-label" for="{{ form.email.id_for_label }}">Email</label>
             {{ form.email }}
+            <p class="auth-hint">Needed to reset your password — there is no other way back into your account</p>
             {% if form.email.errors %}
             <ul class="auth-errors">
                 {% for e in form.email.errors %}<li>{{ e }}</li>{% endfor %}
