@@ -5,8 +5,20 @@ cov.xml
 coverage.lcov
 **/static/admin
 **/static/colorfield
+# python-decouple searches the cwd and its parents, so a .env can legitimately
+# live at the repo root as well as in the settings package. Ignore both, and any
+# stray variant - a committed .env is the one mistake with no cheap undo.
+.env
+*.env
+!.env.example
 smart_training_checklist/settings/.env
 logs/
 
 # Node is used only for the browser helper unit tests (npm test).
 node_modules/
+
+# Local dev database - content source of truth is checklist/fixtures/checklist_content.json
+db.sqlite3
+
+# Generated from poetry.lock by the release workflow; never commit a snapshot
+requirements.txt
