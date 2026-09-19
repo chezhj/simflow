@@ -1,3 +1,15 @@
+## v2.7.1 (2026-09-19)
+
+### Fix
+
+- **settings**: match Django's mail defaults so the existing .env keys suffice
+- **auth**: configure outbound mail and require an email at registration
+- **plugin**: resolve API keys by prefix instead of hashing every stored key
+
+### Refactor
+
+- **settings**: drop the FROM_EMAIL alias
+
 ## v2.7.0 (2026-09-17)
 
 ### Feat
