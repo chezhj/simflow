@@ -122,11 +122,9 @@ EMAIL_USE_SSL = config("EMAIL_USE_SSL", default=False, cast=bool)
 # server would take the whole site down.
 EMAIL_TIMEOUT = config("EMAIL_TIMEOUT", default=10, cast=int)
 
-# FROM_EMAIL is accepted as an alias because that is the name the other apps on
-# this server already use in their .env. Django's own default here is
-# "webmaster@localhost", which no mail host will accept.
+# Django's own default here is "webmaster@localhost", which no mail host will
+# accept, so it needs a real fallback rather than being left to Django.
 DEFAULT_FROM_EMAIL = config(
-    "DEFAULT_FROM_EMAIL",
-    default=config("FROM_EMAIL", default="SimFlow <noreply@simflow.vdwaal.net>"),
+    "DEFAULT_FROM_EMAIL", default="SimFlow <noreply@simflow.vdwaal.net>"
 )
 SERVER_EMAIL = DEFAULT_FROM_EMAIL

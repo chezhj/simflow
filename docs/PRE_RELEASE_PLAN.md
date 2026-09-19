@@ -226,14 +226,12 @@ the settings as first written would have failed silently.
 |---|---|---|---|
 | `EMAIL_PORT` | 587 | **25** | 25 |
 | `EMAIL_USE_TLS` | True | **False** | False |
-| from-address key | `DEFAULT_FROM_EMAIL` | — | `DEFAULT_FROM_EMAIL`, falling back to **`FROM_EMAIL`** |
+| from-address key | `DEFAULT_FROM_EMAIL` | — | `DEFAULT_FROM_EMAIL` (the `.env` uses this name) |
 
 The other apps work on three variables because they run on Django's defaults —
 the cPanel host's local Exim on `localhost:25`, which accepts mailbox
 credentials. Sending to `localhost:587` with STARTTLS would simply not have
-arrived, with nothing in the `.env` to explain why. And the from-address was
-read under a name the `.env` does not use, so it would have fallen through to
-the hardcoded default.
+arrived, with nothing in the `.env` to explain why.
 
 Every default now matches Django's exactly, so this app behaves like its
 neighbours. `EMAIL_TIMEOUT=10` is the one deliberate departure — Django ships no
