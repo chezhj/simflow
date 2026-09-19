@@ -4,8 +4,10 @@
 # pylint: disable=missing-function-docstring
 
 from datetime import datetime, timezone
+from unittest.mock import patch
 
 from django.contrib.auth import get_user_model
+from django.contrib.auth.hashers import check_password
 from django.test import TestCase
 from django.urls import reverse
 
@@ -58,6 +60,52 @@ class TestPluginCheckNextAuth(TestCase):
     def test_get_returns_405(self):
         response = self.client.get(URL, HTTP_AUTHORIZATION=f"Bearer {self.raw_key}")
         self.assertEqual(response.status_code, 405)
+
+    def test_auth_cost_does_not_scale_with_account_count(self):
+        """
+        Resolving a key must not verify every stored hash.
+
+        check_password runs a deliberately slow KDF (~200 ms), and the plugin
+        POSTs at 1 Hz per active pilot, so a scan over all accounts turns each
+        request into users x 200 ms of CPU. Candidates are narrowed by
+        api_key_prefix first, so the call count stays flat as accounts are added.
+        """
+        for n in range(20):
+            other = User.objects.create_user(username=f"other{n}", password="pw")
+            raw, hashed, prefix = generate_api_key()
+            other.profile.api_key_hash = hashed
+            other.profile.api_key_prefix = prefix
+            other.profile.save()
+
+        # The caller is created last so its profile sorts behind every decoy.
+        # A scan over all accounts would therefore hash all 20 decoys first,
+        # while a prefix lookup goes straight to it — that gap is what this
+        # test measures, and it is invisible if the caller happens to sort first.
+        caller = User.objects.create_user(username="lastpilot", password="pw")
+        raw_key, hashed, prefix = generate_api_key()
+        caller.profile.api_key_hash = hashed
+        caller.profile.api_key_prefix = prefix
+        caller.profile.save()
+
+        with patch(
+            "checklist.plugin_views.check_password", wraps=check_password
+        ) as spy:
+            response = _post(self.client, key=raw_key)
+
+        self.assertNotEqual(response.status_code, 401)
+        self.assertLessEqual(
+            spy.call_count,
+            2,
+            "key lookup verified more hashes than the prefix should have matched",
+        )
+
+    def test_unknown_prefix_verifies_no_hashes(self):
+        """A key whose prefix matches nothing is rejected without hashing at all."""
+        with patch("checklist.plugin_views.check_password") as spy:
+            response = _post(self.client, key="fvw_zzzznot-a-real-key")
+
+        self.assertEqual(response.status_code, 401)
+        spy.assert_not_called()
 
 
 class TestPluginCheckNextSession(TestCase):
