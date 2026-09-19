@@ -109,12 +109,13 @@ def require_api_key(view_func):
 
     Candidates are narrowed by api_key_prefix (the first 8 characters of the
     raw key, stored alongside the hash by generate_api_key) before any hash is
-    verified. check_password runs a deliberately slow KDF — ~200 ms per call —
-    so scanning every stored key would make each plugin request cost
-    users x 200 ms. The plugin POSTs state at 1 Hz per active pilot, so that
-    scan saturates the server at a couple of dozen accounts. The prefix is a
-    non-secret index, not a credential: a match still has to clear
-    check_password against the full key.
+    verified. check_password runs a deliberately slow KDF — measured at ~265 ms
+    per call on the production host under Django 5.2 — so scanning every stored
+    key made each plugin request cost accounts x 265 ms: ~2.6 s at ten accounts,
+    ~13 s at fifty. The plugin POSTs state at 1 Hz per active pilot, which is
+    faster than that could be answered, so the backlog compounded rather than
+    settling. The prefix is a non-secret index, not a credential: a match still
+    has to clear check_password against the full key.
 
     Also applies @csrf_exempt — plugin requests have no CSRF token.
     """
