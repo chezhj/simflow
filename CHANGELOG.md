@@ -1,3 +1,9 @@
+## v2.7.2 (2026-09-20)
+
+### Fix
+
+- **settings**: point mail at the submission port and mail 500s to the admin
+
 ## v2.7.1 (2026-09-19)
 
 ### Fix
