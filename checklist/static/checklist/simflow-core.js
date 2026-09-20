@@ -80,7 +80,10 @@
     }
 
     // Fallback poll interval if the config element is missing or unparseable.
-    var DEFAULT_POLL_INTERVAL_MS = 1500;
+    // Fallback only — the server supplies POLL_INTERVAL_MS through #js-config
+    // on every page. Kept in step with settings/base.py so a page that somehow
+    // loses the config does not silently poll at a different rate.
+    var DEFAULT_POLL_INTERVAL_MS = 750;
 
     /**
      * Turn the #js-config element into a config object.
@@ -104,6 +107,32 @@
         };
     }
 
+    /**
+     * Decide what the plugin-update banner should say, from a poll response.
+     * Returns null when there is nothing to show.
+     *
+     * Pure so it can be tested without a DOM — the caller applies the result.
+     * A blocked plugin is not merely outdated: the server refuses it session
+     * data, so the checklist cannot follow the sim at all, and the wording has
+     * to say so rather than suggest an optional update.
+     */
+    function pluginUpdateNotice(data) {
+        if (!data) { return null; }
+        var status = data.plugin_status;
+        if (status !== 'warn' && status !== 'blocked') { return null; }
+
+        var version = data.plugin_version || '';
+        var suffix = version ? ' (v' + version + ')' : '';
+        return {
+            status: status,
+            url: data.plugin_update_url || '',
+            text: status === 'blocked'
+                ? 'This plugin version is no longer supported' + suffix +
+                  ' \u2014 the checklist cannot follow the sim until it is updated'
+                : 'A newer xFlow plugin is available' + suffix,
+        };
+    }
+
     /** readConfig() against the live document. */
     function config(doc) {
         doc = defaultDoc(doc);
@@ -118,6 +147,7 @@
         readConfig: readConfig,
         config: config,
         RECONNECT_GRACE: RECONNECT_GRACE,
+        pluginUpdateNotice: pluginUpdateNotice,
         DEFAULT_POLL_INTERVAL_MS: DEFAULT_POLL_INTERVAL_MS,
     };
 }));

@@ -7,7 +7,7 @@ from django.contrib.auth import get_user_model
 from django.test import TestCase
 from django.urls import reverse
 
-from checklist.models import FlightSession, generate_api_key
+from checklist.models import FlightSession
 
 User = get_user_model()
 URL = reverse("checklist:api_plugin_session")
@@ -24,11 +24,7 @@ class _Base(TestCase):
     def setUp(self):
         self.user = User.objects.create_user(username="pilot", password="pw")
         self.profile = self.user.profile
-        raw, hashed, prefix = generate_api_key()
-        self.raw_key = raw
-        self.profile.api_key_hash = hashed
-        self.profile.api_key_prefix = prefix
-        self.profile.save()
+        self.raw_key = self.profile.set_api_key()
 
 
 class TestPluginSessionAuth(_Base):

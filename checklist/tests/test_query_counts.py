@@ -28,7 +28,6 @@ from checklist.models import (
     FlightSession,
     FlightSessionAttribute,
     Procedure,
-    generate_api_key,
 )
 from checklist.tests.testFactories import CheckItemFactory, SOPFactory
 
@@ -89,11 +88,7 @@ class TestPluginStateQueryCount(_Base):
     def setUp(self):
         user = get_user_model().objects.create_user(username="pilot", password="pw")
         self.profile = user.profile
-        raw, hashed, prefix = generate_api_key()
-        self.raw_key = raw
-        self.profile.api_key_hash = hashed
-        self.profile.api_key_prefix = prefix
-        self.profile.save()
+        self.raw_key = self.profile.set_api_key()
 
     def _count(self, n, slug):
         session = self._build(n, slug)

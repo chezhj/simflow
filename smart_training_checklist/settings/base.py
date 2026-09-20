@@ -118,7 +118,16 @@ MOCK_TOKEN = config("X-Auth-Token", default=None)
 
 # Polling interval for the JS checklist polling loop (milliseconds).
 # Override in dev.py / prod.py if needed.
-POLL_INTERVAL_MS = 1500
+#
+# Half of the old 1500 ms. The wait for the next poll is the largest single
+# term in the delay between a pilot moving a switch and the row ticking on
+# screen — roughly half the total, against ~250 ms for the plugin's own tick
+# and a few ms of server work — so halving it takes ~375 ms off the average.
+#
+# It costs reads only: poll_view's single write is guarded by
+# `if new_state != prev_state` (api_views.py), and its query count is flat in
+# procedure size and ceiling-tested (test_query_counts.py).
+POLL_INTERVAL_MS = 750
 
 # ── Plugin compatibility window ────────────────────────────────────────────── #
 #
@@ -130,8 +139,16 @@ POLL_INTERVAL_MS = 1500
 # version moves to "warn" and the one before that moves to "blocked".
 # Patch-only releases (1.0.x → 1.0.y) never change the window.
 
-PLUGIN_MIN_VERSION = (0, 0, 0)   # nothing blocked yet — first public release
-PLUGIN_WARN_BELOW  = (0, 0, 0)   # nothing warned yet
+# Set at the 1.1.0 release. Nothing in 1.1.0 changed the wire protocol — the
+# changes are a dataref-type cache, a persistent worker thread and a faster
+# tick — so a 1.0.2 plugin still works correctly, just slower. Blocking it
+# would be gratuitous; warning is what the window is for.
+#
+# Setting MIN to the current version instead would leave the warn band empty,
+# because "blocked" is tested first and would catch everything below it — so
+# nobody would ever see a warning.
+PLUGIN_MIN_VERSION = (1, 0, 2)   # the oldest version ever released; blocks nothing that exists
+PLUGIN_WARN_BELOW  = (1, 1, 0)   # anything older than the current release is nudged
 
 # Stable permalink to the latest plugin zip attached to the GitHub release.
 # The GitHub Actions workflow must upload the asset under this exact filename.

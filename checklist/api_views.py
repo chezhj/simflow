@@ -203,8 +203,24 @@ def poll_view(request):
     def _is_optional(item):
         return any(a.pk == _OPTIONAL_ATTR for a in item.attributes.all())
 
+    # Plugin update notice. The plugin learns its own status from an API
+    # response and logs it to X-Plane's Log.txt, which nobody reads — so the
+    # only place a pilot will actually see it is here. Reported only while the
+    # sim is connected: a stale version from a session that ended hours ago
+    # would be a banner about a plugin that is not running.
+    from .plugin_views import plugin_status_for_version
+
+    plugin_status = "ok"
+    if sim_connected and session.plugin_version:
+        plugin_status = plugin_status_for_version(session.plugin_version)
+
     response = {
         "checked_items": checked_items,
+        "plugin_status": plugin_status,
+        "plugin_version": session.plugin_version if sim_connected else "",
+        "plugin_update_url": (
+            settings.PLUGIN_DOWNLOAD_URL if plugin_status != "ok" else ""
+        ),
         "sim_connected": sim_connected,
         "sim_initializing": sim_initializing,
         "last_seen": last_seen,
