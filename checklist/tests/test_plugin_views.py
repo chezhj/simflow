@@ -151,14 +151,36 @@ class TestLegacyApiKeyUpgrade(TestCase):
         self.assertNotEqual(response.status_code, 401)
         self.assertLessEqual(spy.call_count, 2)
 
+    def test_an_upgraded_row_is_never_matched_by_the_legacy_path_again(self):
+        """
+        The load-bearing invariant. Once a row has a digest, the legacy query
+        excludes it (api_key_sha256=None), so whatever is left in api_key_hash
+        is unreachable. Drop that condition from the filter and a superseded
+        key starts authenticating again — which is why this is pinned
+        separately from the hygiene below.
+        """
+        self.profile.api_key_sha256 = api_key_digest("fvw_some-other-key")
+        self.profile.save(update_fields=["api_key_sha256"])
+
+        with patch(
+            "checklist.plugin_views.check_password", wraps=check_password
+        ) as spy:
+            response = _post(self.client, key=self.raw_key)
+
+        self.assertEqual(response.status_code, 401)
+        spy.assert_not_called()
+
     def test_regenerating_clears_the_legacy_hash(self):
-        """A regenerated key must not leave the old PBKDF2 row behind to match."""
-        old_raw = self.raw_key
+        """
+        Hygiene, not the mechanism: the test above shows a superseded key is
+        already unreachable. Clearing the column keeps a dead credential out of
+        a database that is backed up before every migrate, lets the column
+        drain so it can be dropped next release, and means relaxing that filter
+        cannot resurrect anything.
+        """
         self.profile.set_api_key()
         self.profile.refresh_from_db()
-
         self.assertIsNone(self.profile.api_key_hash)
-        self.assertEqual(_post(self.client, key=old_raw).status_code, 401)
 
 
 class TestPluginCheckNextSession(TestCase):

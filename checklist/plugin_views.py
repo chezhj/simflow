@@ -112,7 +112,11 @@ def _resolve_api_key(raw_key: str):
        flat in the number of accounts.
     2. Legacy PBKDF2 — for keys minted before api_key_sha256 existed. Narrowed
        by api_key_prefix so it stays one slow hash rather than one per account,
-       and restricted to rows not yet upgraded. A successful match has the raw
+       and restricted to rows not yet upgraded. That api_key_sha256=None
+       condition is load-bearing, not an optimisation: it is what makes a
+       superseded key stop working, because it puts whatever is left in
+       api_key_hash permanently out of reach. Remove it and an old key starts
+       authenticating again. A successful match has the raw
        key in hand, which is the only moment the digest can be computed, so it
        is written then: every key upgrades itself on first use and path 2 is
        never taken for it again. This is the same trick Django uses to move
