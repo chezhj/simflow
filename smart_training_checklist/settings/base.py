@@ -118,7 +118,16 @@ MOCK_TOKEN = config("X-Auth-Token", default=None)
 
 # Polling interval for the JS checklist polling loop (milliseconds).
 # Override in dev.py / prod.py if needed.
-POLL_INTERVAL_MS = 1500
+#
+# Half of the old 1500 ms. The wait for the next poll is the largest single
+# term in the delay between a pilot moving a switch and the row ticking on
+# screen — roughly half the total, against ~250 ms for the plugin's own tick
+# and a few ms of server work — so halving it takes ~375 ms off the average.
+#
+# It costs reads only: poll_view's single write is guarded by
+# `if new_state != prev_state` (api_views.py), and its query count is flat in
+# procedure size and ceiling-tested (test_query_counts.py).
+POLL_INTERVAL_MS = 750
 
 # ── Plugin compatibility window ────────────────────────────────────────────── #
 #

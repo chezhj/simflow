@@ -80,7 +80,10 @@
     }
 
     // Fallback poll interval if the config element is missing or unparseable.
-    var DEFAULT_POLL_INTERVAL_MS = 1500;
+    // Fallback only — the server supplies POLL_INTERVAL_MS through #js-config
+    // on every page. Kept in step with settings/base.py so a page that somehow
+    // loses the config does not silently poll at a different rate.
+    var DEFAULT_POLL_INTERVAL_MS = 750;
 
     /**
      * Turn the #js-config element into a config object.
