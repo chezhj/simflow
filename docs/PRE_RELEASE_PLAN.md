@@ -541,7 +541,7 @@ plugin → fly a short leg. Then check `logs/django.log` is empty of errors.
 | SSE / long-poll instead of browser polling | The real fix for the remaining ~375 ms, but a substantial change. Revisit once Phase 3 lands. |
 | JS de-duplication stages 3 & 4 (`docs/TODO-js-deduplication.md`) | Internal quality; no user-visible effect. |
 | MySQL | Unless 0.1 says NFS. Revisit if you outgrow one app server. |
-| Dropping the legacy `api_key_hash` column and fallback | One release after 3.1, once every active key has been upgraded. |
+| Dropping the legacy `api_key_hash` column and fallback | One release after 3.1. **Itemised below** so it is not carried by memory. |
 | Purging `db.sqlite3` from git history | See 1.2 — recommended against. |
 | Open issues #17, #21, #24, #25, #28, #29, #32 | Feature work, unrelated to launch readiness. (#30 is closed by 7.1.) |
 
@@ -562,3 +562,52 @@ plugin → fly a short leg. Then check `logs/django.log` is empty of errors.
 ```
 
 Everything in Phases 1, 2, 5 and 7 is independent and can be reordered freely.
+
+---
+
+## Follow-up: retiring the legacy API key column
+
+Step 3.1 left deliberate transitional code so that no existing key stops
+working. It is self-draining — every key moves to the fast path the first time
+it is used — but the code that does the draining has to be deleted by hand
+once it is done.
+
+### Is it safe yet?
+
+```bash
+python manage.py shell --settings=smart_training_checklist.settings.prod -c "
+from checklist.models import UserProfile
+print('not yet upgraded:', UserProfile.objects.filter(api_key_sha256=None).exclude(api_key_hash=None).count())
+"
+```
+
+Zero means every key that has been *used* has upgraded. Note it may never reach
+zero on its own: a pilot who registered a key and never flew again keeps a
+legacy row forever. So this is a judgement call, not a wait — after a reasonable
+window, drop it and let any straggler regenerate on the profile page. With two
+accounts today it should be zero within a day or two of the release.
+
+### What to delete
+
+| | Where | Size |
+|---|---|---|
+| Legacy fallback loop in `_resolve_api_key` | `plugin_views.py` | 12 lines |
+| `check_password` import | `plugin_views.py:15` | 1 line |
+| `api_key_hash` field | `models.py:239` | 1 line + removal migration |
+| `self.api_key_hash = None` and its `update_fields` entry in `set_api_key` | `models.py:257-258` | 2 lines |
+| `TestLegacyApiKeyUpgrade` | `test_plugin_views.py:86-185` | 100 lines |
+| `make_password` import | `test_plugin_views.py:10` | part of a line |
+
+Roughly **16 lines of production code, 100 of test, one migration.**
+
+After deleting, `_resolve_api_key` collapses to a digest lookup and a `None` —
+at which point the separate function may not earn its keep and can fold back
+into `require_api_key`.
+
+### What is NOT transitional
+
+- `api_key_sha256`, `api_key_prefix` (the prefix is shown on the profile page),
+  `api_key_digest()`, `generate_api_key()`, `set_api_key()`.
+- The `api_key_sha256=None` condition on the legacy query disappears with the
+  query itself — but while it exists it is load-bearing, not an optimisation.
+  See `test_an_upgraded_row_is_never_matched_by_the_legacy_path_again`.
