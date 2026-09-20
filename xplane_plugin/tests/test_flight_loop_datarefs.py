@@ -34,7 +34,8 @@ def _make_xp_stub():
     return xp
 
 
-class TestFlightLoopStringDataref(unittest.TestCase):
+class _PluginTestBase(unittest.TestCase):
+    """Shared xp stub and plugin construction. Not collected on its own."""
 
     def setUp(self):
         # Inject the stub before importing the plugin module
@@ -65,6 +66,9 @@ class TestFlightLoopStringDataref(unittest.TestCase):
         plugin._session_id = 1
         plugin._api_key = "test-key"
         return plugin
+
+
+class TestFlightLoopStringDataref(_PluginTestBase):
 
     # -----------------------------------------------------------------------
     # getDatas returns a str directly — verify the loop uses it correctly
@@ -183,3 +187,102 @@ class TestFlightLoopStringDataref(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TestDataRefTypeCaching(_PluginTestBase):
+    """
+    A dataref's type is fixed when it is registered, but getDataRefTypes was
+    being called once per watched path per tick to be told so again. With ~109
+    paths in the largest phase that is ~109 redundant XPLM calls a tick on the
+    main thread, and the flight loop is moving to 2 Hz.
+    """
+
+    def _run_ticks(self, plugin, n):
+        with patch.object(plugin, "_post_state"):
+            for i in range(n):
+                plugin._flight_loop(1.0, 1.0, i, None)
+
+    def test_type_is_read_once_per_path_not_once_per_tick(self):
+        xp = self.xp_stub
+        xp.findDataRef.return_value = object()
+        xp.getDataRefTypes.return_value = 2  # float
+
+        plugin = self._make_plugin()
+        plugin._watch = ["sim/a", "sim/b", "sim/c"]
+
+        self._run_ticks(plugin, 10)
+
+        self.assertEqual(
+            xp.getDataRefTypes.call_count, 3,
+            "type lookup should happen once per path, not once per path per tick",
+        )
+        self.assertEqual(xp.findDataRef.call_count, 3)
+
+    def test_values_are_still_read_every_tick(self):
+        """Caching the type must not cache the value."""
+        xp = self.xp_stub
+        xp.findDataRef.return_value = object()
+        xp.getDataRefTypes.return_value = 2
+        xp.getDataf.return_value = 1.0
+
+        plugin = self._make_plugin()
+        plugin._watch = ["sim/a"]
+
+        self._run_ticks(plugin, 5)
+        self.assertEqual(xp.getDataf.call_count, 5)
+
+    def test_a_missing_dataref_is_reported_once_not_every_tick(self):
+        """
+        At 2 Hz an unresolvable dataref would otherwise put two lines a second
+        into Log.txt for the length of the flight.
+        """
+        xp = self.xp_stub
+        xp.findDataRef.return_value = None
+
+        plugin = self._make_plugin()
+        plugin._watch = ["sim/does-not-exist"]
+
+        with patch.object(plugin, "_log") as log:
+            self._run_ticks(plugin, 10)
+
+        warnings = [c for c in log.call_args_list if c.args and c.args[0] == "WARNING"]
+        self.assertEqual(len(warnings), 1, f"expected one warning, got {warnings}")
+
+    def test_a_dataref_that_appears_later_is_picked_up(self):
+        """
+        The miss must not be cached as a negative result: an aircraft loading
+        after the plugin starts registers its datarefs late, and those have to
+        resolve on a later tick.
+        """
+        xp = self.xp_stub
+        xp.findDataRef.return_value = None
+        xp.getDataRefTypes.return_value = 2
+        xp.getDataf.return_value = 42.0
+
+        plugin = self._make_plugin()
+        plugin._watch = ["laminar/B738/late"]
+
+        self._run_ticks(plugin, 3)
+        self.assertEqual(plugin._last_values.get("laminar/B738/late"), None)
+
+        xp.findDataRef.return_value = object()  # aircraft finishes loading
+        self._run_ticks(plugin, 1)
+
+        self.assertEqual(plugin._last_values.get("laminar/B738/late"), 42.0)
+
+    def test_a_changed_watch_list_drops_cached_types(self):
+        """
+        Entries for paths no longer watched must not survive, or a path that
+        returns later would be read with a stale handle.
+        """
+        xp = self.xp_stub
+        xp.findDataRef.return_value = object()
+        xp.getDataRefTypes.return_value = 2
+
+        plugin = self._make_plugin()
+        plugin._watch = ["sim/a", "sim/b"]
+        self._run_ticks(plugin, 1)
+        self.assertEqual(set(plugin._drefs), {"sim/a", "sim/b"})
+
+        plugin._drefs = {p: v for p, v in plugin._drefs.items() if p in ["sim/a"]}
+        self.assertEqual(set(plugin._drefs), {"sim/a"})

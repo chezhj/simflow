@@ -147,7 +147,17 @@ class PythonInterface:
         # Watch list: dataref path → cached XP DataRef handle
         # Populated from server responses; starts empty.
         self._watch: list[str] = []
-        self._drefs: dict[str, object] = {}  # path → xp.findDataRef() result
+        # path → (xp.findDataRef() result, XPLM type bitmask). The type is
+        # cached with the handle rather than read per tick: a dataref's type is
+        # fixed when it is registered, so getDataRefTypes was being called once
+        # per watched path per tick to be told the same thing every time. The
+        # two share a lifetime, so caching them together makes them impossible
+        # to invalidate separately.
+        self._drefs: dict[str, tuple] = {}
+        # Paths already reported as unresolvable, so the warning is logged once
+        # rather than every tick. Cleared whenever the watch list or session
+        # changes, so a reloaded aircraft reports afresh.
+        self._missing_drefs: set[str] = set()
 
         # Last sent values — used to detect changes before POSTing
         self._last_values: dict[str, float | str] = {}
@@ -204,6 +214,31 @@ class PythonInterface:
 
     # ── Flight loop ────────────────────────────────────────────────────────── #
 
+    def _resolve_dref(self, path: str, lookup_name: str):
+        """
+        Return the cached (handle, type) for path, resolving it on first use.
+        Returns None — having logged once, on the miss — if X-Plane does not
+        know the dataref.
+        """
+        entry = self._drefs.get(path)
+        if entry is None:
+            dref = xp.findDataRef(lookup_name)
+            if dref is None:
+                # Retried on the next tick rather than cached: an aircraft that
+                # loads after the plugin registers its datarefs late, and a
+                # negative cache would mean never picking them up. But the
+                # warning is emitted once per path — at 2 Hz an unresolvable
+                # dataref would otherwise fill Log.txt at two lines a second
+                # for the whole flight.
+                if lookup_name not in self._missing_drefs:
+                    self._missing_drefs.add(lookup_name)
+                    self._log("WARNING", f"dataref not found: {lookup_name}")
+                return None
+            self._missing_drefs.discard(lookup_name)
+            entry = (dref, xp.getDataRefTypes(dref))
+            self._drefs[path] = entry
+        return entry
+
     def _flight_loop(
         self, since_last: float, elapsed: float, counter: int, ref
     ) -> float:
@@ -241,15 +276,10 @@ class PythonInterface:
             m = _ARRAY_RE.match(path)
             if m:
                 base, idx = m.group(1), int(m.group(2))
-                dref = self._drefs.get(path)
-                if dref is None:
-                    dref = xp.findDataRef(base)
-                    if dref is None:
-                        self._log("WARNING", f"dataref not found: {base}")
-                        continue
-                    self._drefs[path] = dref
-
-                dtype = xp.getDataRefTypes(dref)
+                entry = self._resolve_dref(path, base)
+                if entry is None:
+                    continue
+                dref, dtype = entry
 
                 if dtype & 16:
                     ibuf = [0] * (idx + 1)
@@ -273,19 +303,15 @@ class PythonInterface:
                     )
                     continue
             else:
-                dref = self._drefs.get(path)
-                if dref is None:
-                    dref = xp.findDataRef(path)
-                    if dref is None:
-                        self._log("WARNING", f"dataref not found: {path}")
-                        continue
-                    self._drefs[path] = dref
+                entry = self._resolve_dref(path, path)
+                if entry is None:
+                    continue
+                dref, dtype = entry
                 # XPLM type bits: Int=1, Float=2, Double=4, FloatArray=8,
                 #                 IntArray=16, Data/string=32.
                 # Priority: Double > Float > Int-only, so that datarefs typed as
                 # both Int+Float (e.g. FMS lat/lon) use getDataf and keep precision.
                 # getDataf returns 0.0 for purely-int datarefs, so Int is last.
-                dtype = xp.getDataRefTypes(dref)
                 if dtype & 32:
                     val = xp.getDatas(dref, 0, 64).rstrip("\x00").strip()
                 elif dtype & 4:
@@ -344,9 +370,9 @@ class PythonInterface:
         self._log("INFO", f"=== watch dump: {len(watch)} dataref(s) ===")
         for path in watch:
             val = values.get(path, "<not yet read>")
-            dref = drefs.get(path)
-            if dref is not None:
-                dtype = xp.getDataRefTypes(dref)
+            entry = drefs.get(path)
+            if entry is not None:
+                dtype = entry[1]
                 type_label = _TYPE_LABELS.get(dtype, f"type={dtype}")
             else:
                 type_label = "not found"
@@ -454,6 +480,7 @@ class PythonInterface:
                         "INFO",
                         f"session changed {self._session_id} → {new_id}, resetting watch list",
                     )
+                    self._missing_drefs.clear()
                     self._session_id = new_id
                     self._watch = []
                     self._drefs = {}
@@ -530,6 +557,7 @@ class PythonInterface:
                     self._drefs = {
                         p: v for p, v in self._drefs.items() if p in new_watch
                     }
+                    self._missing_drefs.clear()
         elif status == 401:
             self._log("ERROR", "authentication failed — check api_key in config.ini")
         elif status == 404:
