@@ -304,6 +304,11 @@ class FlightSession(models.Model):
     active_phase = models.CharField(max_length=50, blank=True)
     created_at = models.DateTimeField(auto_now_add=True)
     last_plugin_contact = models.DateTimeField(null=True, blank=True)
+    # Reported by the plugin on every request via X-Plugin-Version. Stored so
+    # the browser can warn about an outdated plugin: the plugin itself only
+    # learns its status from an API response and writes it to X-Plane's
+    # Log.txt, which nobody reads.
+    plugin_version = models.CharField(max_length=20, blank=True)
     is_active = models.BooleanField(default=True)
     pilot_overrides = models.JSONField(
         default=dict,

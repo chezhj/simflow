@@ -275,7 +275,7 @@ perceived responsiveness than 3.1 does.
 Do these **in order**, re-running the 0.6 measurement after each, so each
 change's effect is attributable.
 
-### [ ] 3.1 **[decide + code]** Replace PBKDF2 with SHA-256 for API keys
+### [x] 3.1 **[code]** SHA-256 API keys — DONE (hard cutover)
 
 **Re-framed after 0.6: this is a capacity fix, not a latency fix.** On the real
 hardware PBKDF2 costs ~265 ms, which is only ~17% of perceived GUI latency. It
@@ -345,7 +345,7 @@ back on a path the plugin hits every half second.
 > revoked key keeps working until its TTL expires. Mentioned for completeness;
 > (b) is cleaner and has no revocation lag.
 
-### [ ] 3.2 **[code]** `POLL_INTERVAL_MS` 1500 → 750
+### [x] 3.2 **[code]** `POLL_INTERVAL_MS` 1500 → 750 — DONE
 
 −375 ms average, browser side. `poll_view` is read-only (its one
 `session.save()` is guarded by `if new_state != prev_state`,
@@ -377,22 +377,37 @@ pattern at `:125`) so anyone on a weak rig can back off. **[decide]** what the
 shipped default should be — 2 Hz for responsiveness, or 1 Hz with 2 Hz opt-in.
 Recommend shipping 2 Hz: the measured cost is ~2 ms of main thread per tick.
 
-### [ ] 3.6 **[code]** Conditional heartbeat write
+### [-] 3.6 **[code]** Conditional heartbeat write — DROPPED
 
-The plugin already computes `changed` at `:303` and then only logs it. Use it:
+**It would save nothing.** The step assumed a cockpit can sit with unchanged
+datarefs between ticks. It cannot: **12 of the 27 always-streamed datarefs vary
+continuously**, in every phase of every session, because they back the
+`show_rule`s and attribute `live_rule`s rather than any one procedure —
 
-- **changed** → write both `last_plugin_contact` and `last_datarefs`. This is
-  exactly when latency matters, so nothing is ever deferred.
-- **unchanged** → write only if the stamp is older than ~5 s. The connection
-  badge tolerates 30 s (`_PLUGIN_TIMEOUT_SECONDS`).
+```
+sim/flightmodel/position/latitude, longitude, y_agl, psi, mag_psi
+sim/flightmodel/position/indicated_airspeed, vh_ind_fpm
+sim/cockpit2/gauges/indicators/altitude_ft_pilot
+laminar/B738/autopilot/altitude, altitude_mode
+laminar/B738/fuel/center_tank_kgs
+sim/weather/temperature_sealevel_c
+```
 
-POST rate unchanged, detection latency unchanged. A stable cockpit writes once
-per 5 s instead of 5 times; while you are flipping switches it writes every
-tick. Writes are skipped only when, by definition, nothing happened.
+Parked on stand with the APU running, position jitters on float noise, fuel
+burns and sea-level temperature drifts. `changed` would be true on effectively
+every tick, so the step would add a ~100-key dict comparison per request to skip
+a write that is almost never skipped. Net negative.
 
-**Important**: skip the *write*, never the *evaluation*. The gate can move
-because the pilot checked something in the browser, so rules must still be
-evaluated on every POST even when datarefs are identical.
+A version that worked would have to quantise the continuous values before
+comparing, or compare only the discrete ones — which changes what "unchanged"
+means while rules compare exact values. Not a risk worth taking pre-launch for
+something **4.1 (WAL)** solves properly.
+
+> **Consequence**: this was the hedge for WAL being blocked on the
+> `backup_sqlite` change in `www_installer`. With the hedge gone, that change is
+> what write concurrency now rests on — at 2 Hz across ten concurrent pilots,
+> ~20 writes/sec against a rollback-journal database where writers block
+> readers.
 
 ### [ ] 3.7 **[verify]** Re-measure
 
@@ -570,3 +585,29 @@ plugin → fly a short leg. Then check `logs/django.log` is empty of errors.
 ```
 
 Everything in Phases 1, 2, 5 and 7 is independent and can be reordered freely.
+
+---
+
+## S4 / S5 as built
+
+**Where the banner lives.** Flush under `.conn-bar`, not inside it. `.conn-bar`
+is a flex row whose layout is re-asserted at both the 600 px and 900 px
+breakpoints, so turning it into a column wrapper to hold a second child would
+have fought both. Full width and hard against it, so it reads as part of the
+connection bar.
+
+**Unreadable version warns, it does not block.** Six existing tests failed when
+an absent `X-Plugin-Version` was first treated as `(0, 0, 0)` and therefore
+below the minimum. They were right to: blocking withholds session data and
+stops the checklist following the sim, which is far too much to do to a client
+that merely failed to identify itself. Only a version explicitly below
+`PLUGIN_MIN_VERSION` is blocked. An unknown version still never passes as
+current.
+
+**The window.** `MIN = (1, 0, 2)`, `WARN_BELOW = (1, 1, 0)`. Setting MIN to the
+current release instead would leave the warn band empty — `blocked` is tested
+first and would catch everything below — so nobody would ever see the warning.
+`test_the_warn_band_is_not_empty` guards that.
+
+**Dismissal is per page load**, deliberately not persisted: the notice should
+come back next session while the plugin is still out of date.

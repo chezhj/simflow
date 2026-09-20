@@ -116,3 +116,32 @@ test('readConfig rejects a nonsensical interval rather than polling flat out', (
     assert.equal(SimFlow.readConfig({ dataset: { pollIntervalMs: '-5' } }).pollIntervalMs,
         SimFlow.DEFAULT_POLL_INTERVAL_MS);
 });
+
+test('pluginUpdateNotice stays silent when the plugin is current', () => {
+    assert.equal(SimFlow.pluginUpdateNotice({plugin_status: 'ok'}), null);
+    assert.equal(SimFlow.pluginUpdateNotice({}), null);
+    assert.equal(SimFlow.pluginUpdateNotice(null), null);
+});
+
+test('pluginUpdateNotice names the version when one is reported', () => {
+    const n = SimFlow.pluginUpdateNotice({
+        plugin_status: 'warn', plugin_version: '1.0.2',
+        plugin_update_url: 'https://example.com/x.zip',
+    });
+    assert.equal(n.status, 'warn');
+    assert.match(n.text, /v1\.0\.2/);
+    assert.equal(n.url, 'https://example.com/x.zip');
+});
+
+test('pluginUpdateNotice copes with a missing version', () => {
+    const n = SimFlow.pluginUpdateNotice({plugin_status: 'warn'});
+    assert.ok(n.text.length > 0);
+    assert.ok(!n.text.includes('undefined'));
+});
+
+test('a blocked plugin says the checklist cannot follow the sim, not that an update exists', () => {
+    const warn = SimFlow.pluginUpdateNotice({plugin_status: 'warn', plugin_version: '1.0.0'});
+    const blocked = SimFlow.pluginUpdateNotice({plugin_status: 'blocked', plugin_version: '0.9.0'});
+    assert.notEqual(warn.text, blocked.text);
+    assert.match(blocked.text, /cannot follow the sim/);
+});

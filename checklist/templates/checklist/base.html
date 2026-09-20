@@ -26,7 +26,7 @@
       the same channel wakelock.js uses. Read via SimFlow.config().
     {% endcomment %}
     <div id="js-config" hidden
-         data-poll-interval-ms="{{ poll_interval_ms|default:1500 }}"
+         data-poll-interval-ms="{{ poll_interval_ms|default:750 }}"
          data-url-poll="{% url 'checklist:api_poll' %}"
          data-url-check="{% url 'checklist:api_check' %}"
          data-url-uncheck="{% url 'checklist:api_uncheck' %}"
@@ -85,6 +85,16 @@
             {% endif %}
             <button class="info-btn" id="info-open-btn" aria-label="Open info panel">i</button>
         </div>
+    </div>
+
+    <!-- Plugin update notice. Hidden until a poll reports warn/blocked; the
+         pilot's only sight of it, since the plugin logs its own status to
+         X-Plane's Log.txt. -->
+    <div class="conn-update js-hidden" id="plugin-update-bar" role="status">
+        <span class="conn-update-text" id="plugin-update-text"></span>
+        <a class="conn-update-link" id="plugin-update-link" target="_blank" rel="noopener">Download</a>
+        <button class="conn-update-close" id="plugin-update-close"
+                aria-label="Dismiss plugin update notice">×</button>
     </div>
 
     <!-- ── Info panel ──────────────────────────────────────────────── -->
@@ -233,6 +243,39 @@
         });
     }());
     </script>
+
+<script>
+/* Plugin update banner — applied from the poll loops in detail.html and
+   idle.html, so it lives here rather than being written twice. Dismissal is
+   per page load and deliberately not persisted: the notice should come back
+   next session while the plugin is still out of date. */
+(function () {
+    var bar = document.getElementById('plugin-update-bar');
+    if (!bar) { return; }
+    var textEl = document.getElementById('plugin-update-text');
+    var linkEl = document.getElementById('plugin-update-link');
+    var dismissed = false;
+
+    document.getElementById('plugin-update-close').addEventListener('click', function () {
+        dismissed = true;
+        bar.classList.add('js-hidden');
+    });
+
+    window.applyPluginUpdate = function (data) {
+        if (dismissed) { return; }
+        var notice = SimFlow.pluginUpdateNotice(data);
+        if (!notice) {
+            bar.classList.add('js-hidden');
+            return;
+        }
+        textEl.textContent = notice.text;
+        linkEl.href = notice.url;
+        linkEl.classList.toggle('js-hidden', !notice.url);
+        bar.classList.toggle('conn-update-blocked', notice.status === 'blocked');
+        bar.classList.remove('js-hidden');
+    };
+})();
+</script>
 
     {% block end_script %}{% endblock end_script %}
 

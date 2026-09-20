@@ -290,6 +290,8 @@
             var res  = await fetch(CFG.urls.poll + '?since=' + lastPoll, {cache: 'no-store'});
             var data = await res.json();
 
+            if (window.applyPluginUpdate) { window.applyPluginUpdate(data); }
+
             /* Ignore a reply overtaken by a newer one (see detail.html). */
             if (seq <= appliedSeq) return;
             appliedSeq = seq;

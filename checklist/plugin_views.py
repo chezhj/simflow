@@ -54,15 +54,27 @@ def _parse_version(version_str: str) -> tuple[int, ...]:
         return (0, 0, 0)
 
 
-def _plugin_status(request) -> str:
+def plugin_status_for_version(raw: str) -> str:
     """
-    Return 'ok', 'warn', or 'blocked' based on the X-Plugin-Version request
-    header checked against PLUGIN_MIN_VERSION and PLUGIN_WARN_BELOW in settings.
+    Classify a plugin version string against PLUGIN_MIN_VERSION and
+    PLUGIN_WARN_BELOW: 'ok', 'warn', or 'blocked'.
 
-    A missing header is treated as (0, 0, 0) — the oldest possible version.
+    A version we cannot read — absent, empty or unparseable — is 'warn', not
+    'blocked'. Blocking is a hard stop: the server withholds session data and
+    the checklist stops following the sim, which is the wrong answer to "this
+    client did not tell me what it is". Only a version that is explicitly
+    below the minimum earns that. It also fails safe in the other direction:
+    an unknown plugin is never silently treated as current.
+
+    Shared with the browser poll, which asks the same question about the
+    version stored on the FlightSession rather than a request header.
     """
-    raw = request.headers.get("X-Plugin-Version", "")
-    version = _parse_version(raw) if raw else (0, 0, 0)
+    if not raw or not raw.strip():
+        return "warn"
+    version = _parse_version(raw)
+    if version == (0, 0, 0):  # _parse_version's failure value
+        return "warn"
+
     min_ver = getattr(settings, "PLUGIN_MIN_VERSION", (0, 0, 0))
     warn_ver = getattr(settings, "PLUGIN_WARN_BELOW", (0, 0, 0))
 
@@ -71,6 +83,11 @@ def _plugin_status(request) -> str:
     if version < warn_ver:
         return "warn"
     return "ok"
+
+
+def _plugin_status(request) -> str:
+    """Status of the plugin making this request, from its X-Plugin-Version."""
+    return plugin_status_for_version(request.headers.get("X-Plugin-Version", ""))
 
 def get_datarefs(session) -> dict:
     """
@@ -290,9 +307,13 @@ def plugin_session(request):
         return JsonResponse({}, status=404)
 
     # Stamp last_plugin_contact so the browser badge shows "Initializing"
-    # even before the first state POST arrives.
+    # even before the first state POST arrives, and record the version so the
+    # browser can warn about an outdated plugin.
     now = datetime.now(tz=timezone.utc)
-    FlightSession.objects.filter(pk=session.pk).update(last_plugin_contact=now)
+    FlightSession.objects.filter(pk=session.pk).update(
+        last_plugin_contact=now,
+        plugin_version=request.headers.get("X-Plugin-Version", ""),
+    )
 
     if status == "warn":
         logger.info(
@@ -364,7 +385,9 @@ def plugin_state(request):
     # Persist the snapshot alongside the contact stamp — one UPDATE, and every
     # worker process then reads the same state (see get_datarefs).
     FlightSession.objects.filter(pk=session.pk).update(
-        last_plugin_contact=now, last_datarefs=datarefs
+        last_plugin_contact=now,
+        last_datarefs=datarefs,
+        plugin_version=request.headers.get("X-Plugin-Version", ""),
     )
     session.last_datarefs = datarefs
 

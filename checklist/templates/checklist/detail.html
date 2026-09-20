@@ -823,6 +823,8 @@
                                   {cache: 'no-store'});
             var data = await res.json();
 
+            if (window.applyPluginUpdate) { window.applyPluginUpdate(data); }
+
             /* Drop a response that lost the race. setInterval fires whether or not
                the previous fetch has returned, so a slow reply can land after a
                newer one; applying it would rewind the `since` cursor and re-apply a
