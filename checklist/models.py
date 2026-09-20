@@ -232,11 +232,6 @@ class UserProfile(models.Model):
     api_key_sha256 = models.CharField(
         max_length=64, blank=True, null=True, unique=True
     )
-    # Legacy PBKDF2 hash, kept only so keys minted before api_key_sha256 keep
-    # working. require_api_key upgrades such a row in place the first time it
-    # is used, so this column drains on its own and can be dropped a release
-    # later. Nothing writes it any more.
-    api_key_hash = models.CharField(max_length=128, blank=True, null=True)
     # First 8 characters of the raw key. Shown on the profile page so a key can
     # be recognised, and used to narrow the legacy lookup below.
     api_key_prefix = models.CharField(max_length=8, blank=True, null=True)
@@ -248,14 +243,13 @@ class UserProfile(models.Model):
         """
         Mint a new API key, persist its digest and prefix, and return the raw
         key — which the caller must show immediately, because it is not stored
-        and cannot be recovered. Any previous key for this profile, legacy hash
-        included, stops working.
+        and cannot be recovered. Any previous key for this profile stops
+        working.
         """
         raw, digest, prefix = generate_api_key()
         self.api_key_sha256 = digest
         self.api_key_prefix = prefix
-        self.api_key_hash = None
-        self.save(update_fields=["api_key_sha256", "api_key_prefix", "api_key_hash"])
+        self.save(update_fields=["api_key_sha256", "api_key_prefix"])
         return raw
 
 

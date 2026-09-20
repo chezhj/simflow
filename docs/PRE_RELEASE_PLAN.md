@@ -313,22 +313,31 @@ passwords expensive to brute-force offline; a 256-bit random token has no
 brute-force surface, so the 265 ms buys nothing. This is what DRF's token auth
 and GitHub PATs do.
 
-Design:
-- Add `api_key_sha256 = CharField(max_length=64, null=True, db_index=True)`.
-- Store `hashlib.sha256(raw.encode()).hexdigest()`; compare with
-  `hmac.compare_digest`.
-- **Lazy migration, no user disruption**: look up by SHA-256 first. On a miss,
-  fall back to the prefix-narrowed PBKDF2 path; a successful fallback has the raw
-  key in hand, so write the SHA-256 then. First request after deploy costs
-  265 ms, every one after is instant. Same pattern Django uses to upgrade
-  password hashers on login.
+Design — **hard cutover, no bridge**:
+- Add `api_key_sha256` (indexed, unique, nullable) and **remove `api_key_hash`
+  in the same migration**. Nothing was deployed yet, so this is one migration
+  rather than an add now and a drop later.
+- Store `hashlib.sha256(raw.encode()).hexdigest()`; resolve with one indexed
+  lookup, inline in `require_api_key`.
+- **Existing keys are invalidated.** Every current holder regenerates on the
+  profile page and pastes into `config.ini`, then restarts X-Plane (the plugin
+  reads its config at start). The plugin already logs
+  `authentication failed — check api_key in config.ini` at ERROR on a 401.
 - Keep `api_key_prefix` — the profile page displays it
   (`registration/profile.html:123`).
-- Keep `api_key_hash` and the fallback for one release, then remove both.
 
-Tests: SHA-256 path resolves; legacy PBKDF2 key still authenticates; legacy key
-is upgraded in place after first use; unknown key 401s without hashing; the
-existing flat-cost test still passes.
+A lazy-upgrade bridge was built first and then removed. It worked, but it cost
+16 lines of production code and 100 of test, plus a column that had to be
+dropped later on a judgement call — a count that would never reach zero on its
+own, because a key only upgrades when it is used. Spending that to spare one
+known user a single paste was the wrong trade while the user count is still
+countable on one hand. Doing it before announcing is the same reasoning that
+pulls the plugin work forward: free today, a support thread per user later.
+
+Tests: a current key resolves with 20 other accounts present; an unknown key
+401s; and a PBKDF2 hash sitting in the digest column does **not** authenticate —
+the cutover contract, which fails if anyone re-adds a fallback and puts the KDF
+back on a path the plugin hits every half second.
 
 > **Lighter alternative if you want no migration before launch**: a per-worker
 > in-memory cache of `sha256(raw_key) → profile_id` with a short TTL. ~15 lines,
@@ -541,7 +550,6 @@ plugin → fly a short leg. Then check `logs/django.log` is empty of errors.
 | SSE / long-poll instead of browser polling | The real fix for the remaining ~375 ms, but a substantial change. Revisit once Phase 3 lands. |
 | JS de-duplication stages 3 & 4 (`docs/TODO-js-deduplication.md`) | Internal quality; no user-visible effect. |
 | MySQL | Unless 0.1 says NFS. Revisit if you outgrow one app server. |
-| Dropping the legacy `api_key_hash` column and fallback | One release after 3.1. **Itemised below** so it is not carried by memory. |
 | Purging `db.sqlite3` from git history | See 1.2 — recommended against. |
 | Open issues #17, #21, #24, #25, #28, #29, #32 | Feature work, unrelated to launch readiness. (#30 is closed by 7.1.) |
 
@@ -562,52 +570,3 @@ plugin → fly a short leg. Then check `logs/django.log` is empty of errors.
 ```
 
 Everything in Phases 1, 2, 5 and 7 is independent and can be reordered freely.
-
----
-
-## Follow-up: retiring the legacy API key column
-
-Step 3.1 left deliberate transitional code so that no existing key stops
-working. It is self-draining — every key moves to the fast path the first time
-it is used — but the code that does the draining has to be deleted by hand
-once it is done.
-
-### Is it safe yet?
-
-```bash
-python manage.py shell --settings=smart_training_checklist.settings.prod -c "
-from checklist.models import UserProfile
-print('not yet upgraded:', UserProfile.objects.filter(api_key_sha256=None).exclude(api_key_hash=None).count())
-"
-```
-
-Zero means every key that has been *used* has upgraded. Note it may never reach
-zero on its own: a pilot who registered a key and never flew again keeps a
-legacy row forever. So this is a judgement call, not a wait — after a reasonable
-window, drop it and let any straggler regenerate on the profile page. With two
-accounts today it should be zero within a day or two of the release.
-
-### What to delete
-
-| | Where | Size |
-|---|---|---|
-| Legacy fallback loop in `_resolve_api_key` | `plugin_views.py` | 12 lines |
-| `check_password` import | `plugin_views.py:15` | 1 line |
-| `api_key_hash` field | `models.py:239` | 1 line + removal migration |
-| `self.api_key_hash = None` and its `update_fields` entry in `set_api_key` | `models.py:257-258` | 2 lines |
-| `TestLegacyApiKeyUpgrade` | `test_plugin_views.py:86-185` | 100 lines |
-| `make_password` import | `test_plugin_views.py:10` | part of a line |
-
-Roughly **16 lines of production code, 100 of test, one migration.**
-
-After deleting, `_resolve_api_key` collapses to a digest lookup and a `None` —
-at which point the separate function may not earn its keep and can fold back
-into `require_api_key`.
-
-### What is NOT transitional
-
-- `api_key_sha256`, `api_key_prefix` (the prefix is shown on the profile page),
-  `api_key_digest()`, `generate_api_key()`, `set_api_key()`.
-- The `api_key_sha256=None` condition on the legacy query disappears with the
-  query itself — but while it exists it is load-bearing, not an optimisation.
-  See `test_an_upgraded_row_is_never_matched_by_the_legacy_path_again`.
