@@ -63,17 +63,23 @@ SECURE_HSTS_SECONDS = config("SECURE_HSTS_SECONDS", default=0, cast=int)
 
 # ── Error visibility ──────────────────────────────────────────────────────── #
 #
-# With DEBUG=False and no LOGGING block, Django's default config routes
-# django.request errors to mail_admins only — and ADMINS is empty, so every
-# 500 the app serves is discarded without a trace. Write them to a file the
-# server keeps instead, so a user reporting "it broke" can be matched to a
-# stack trace. logs/ is created by the app at runtime and is gitignored.
+# With DEBUG=False and no LOGGING block, Django routes django.request errors to
+# mail_admins only — and ADMINS was empty, so every 500 was discarded untraced.
+#
+# NOTE the interaction with ADMINS below: Django attaches mail_admins to the
+# "django" logger, and the django.request entry here sets propagate=False, so it
+# shadows that chain entirely. Setting ADMINS alone would therefore send
+# nothing. mail_admins has to be named here explicitly, and that is easy to drop
+# by accident — test_settings_prod.py fails if it goes missing.
 _LOG_DIR = Path(BASE_DIR) / "logs"
 _LOG_DIR.mkdir(exist_ok=True)
 
 LOGGING = {
     "version": 1,
     "disable_existing_loggers": False,
+    "filters": {
+        "require_debug_false": {"()": "django.utils.log.RequireDebugFalse"},
+    },
     "formatters": {
         "verbose": {
             "format": "{asctime} {levelname} {name} {message}",
@@ -88,9 +94,22 @@ LOGGING = {
             "backupCount": 3,
             "formatter": "verbose",
         },
+        # Sends inline, in the request that failed, so a slow mail host delays
+        # the error response by up to EMAIL_TIMEOUT. It is also unthrottled:
+        # a persistent 500 sends one mail per request.
+        "mail_admins": {
+            "class": "django.utils.log.AdminEmailHandler",
+            "level": "ERROR",
+            "filters": ["require_debug_false"],
+            "include_html": True,
+        },
     },
     "loggers": {
-        "django.request": {"handlers": ["file"], "level": "ERROR", "propagate": False},
+        "django.request": {
+            "handlers": ["file", "mail_admins"],
+            "level": "ERROR",
+            "propagate": False,
+        },
         "checklist": {"handlers": ["file"], "level": "INFO", "propagate": False},
     },
 }
@@ -98,33 +117,42 @@ LOGGING = {
 
 # ── Outbound mail ─────────────────────────────────────────────────────────── #
 #
-# Password reset was fully routed but unconfigured, so Django fell back to its
-# default SMTP backend and PasswordResetForm.save() raised — the recovery flow
-# was wired up and dead.
+# Host, port and TLS match weekmenu's prod.py, which is the working reference
+# for this server: mail.vdwaal.net:587 offers AUTH only after STARTTLS, so
+# credentials never cross the wire in the clear. They stay overridable from
+# .env, but the defaults mean this app needs the same three variables its
+# neighbour does — EMAIL_HOST_USER, EMAIL_HOST_PASSWORD, DEFAULT_FROM_EMAIL.
 #
-# Every default below is *exactly* Django's own. That is deliberate: on cPanel
-# the local Exim listens on localhost:25 and accepts mailbox credentials, so
-# setting EMAIL_HOST_USER, EMAIL_HOST_PASSWORD and a from-address is enough, and
-# this app then behaves identically to the other apps on this server. Do not
-# "modernise" these to 587/TLS without setting EMAIL_HOST to a host that speaks
-# STARTTLS on that port — a mismatched port is a silent delivery failure.
+# Do not "simplify" this to Django's defaults (localhost:25). Exim there
+# advertises no AUTH even after STARTTLS, and Django calls login() whenever
+# both credentials are set, so that combination raises SMTPNotSupportedError.
 EMAIL_BACKEND = "django.core.mail.backends.smtp.EmailBackend"
-EMAIL_HOST = config("EMAIL_HOST", default="localhost")
-EMAIL_PORT = config("EMAIL_PORT", default=25, cast=int)
+EMAIL_HOST = config("EMAIL_HOST", default="mail.vdwaal.net")
+EMAIL_PORT = config("EMAIL_PORT", default=587, cast=int)
+EMAIL_USE_TLS = config("EMAIL_USE_TLS", default=True, cast=bool)
+EMAIL_USE_SSL = config("EMAIL_USE_SSL", default=False, cast=bool)
 EMAIL_HOST_USER = config("EMAIL_HOST_USER", default="")
 EMAIL_HOST_PASSWORD = config("EMAIL_HOST_PASSWORD", default="")
-EMAIL_USE_TLS = config("EMAIL_USE_TLS", default=False, cast=bool)
-EMAIL_USE_SSL = config("EMAIL_USE_SSL", default=False, cast=bool)
 
-# The one deliberate departure from Django's defaults. Django ships no timeout
-# at all, so a black-holed SMTP host holds the worker open indefinitely; under
-# Passenger with a handful of workers, a few reset requests against a dead mail
-# server would take the whole site down.
+# Django ships no timeout at all, so a host that accepts the connection and
+# then never answers holds the worker open indefinitely. weekmenu has the same
+# exposure; here it also bounds the error mail below, which sends inline.
 EMAIL_TIMEOUT = config("EMAIL_TIMEOUT", default=10, cast=int)
 
-# Django's own default here is "webmaster@localhost", which no mail host will
-# accept, so it needs a real fallback rather than being left to Django.
+# Django's own default is "webmaster@localhost", which no mail host accepts.
 DEFAULT_FROM_EMAIL = config(
     "DEFAULT_FROM_EMAIL", default="SimFlow <noreply@simflow.vdwaal.net>"
 )
-SERVER_EMAIL = DEFAULT_FROM_EMAIL
+# The From address on error mail specifically — Django uses SERVER_EMAIL for
+# those, not DEFAULT_FROM_EMAIL.
+SERVER_EMAIL = config("SERVER_EMAIL", default=DEFAULT_FROM_EMAIL)
+
+
+# ── Error reporting ───────────────────────────────────────────────────────── #
+#
+# Read from .env rather than hardcoded: this repository is public, and an
+# address in it is an address that gets scraped. Unset means an empty ADMINS,
+# which makes the mail_admins handler a no-op — no crash, just no mail.
+_ADMIN_EMAIL = config("ADMIN_EMAIL", default="")
+ADMINS = [("SimFlow admin", _ADMIN_EMAIL)] if _ADMIN_EMAIL else []
+MANAGERS = ADMINS
