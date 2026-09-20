@@ -30,6 +30,7 @@ from __future__ import annotations
 
 import configparser
 import json
+import queue
 import re
 import threading
 import urllib.error
@@ -72,6 +73,17 @@ _MISS_COMMAND_DESC = "xFlow – Report rule miss for the first unchecked checkli
 # ── Flight loop interval ───────────────────────────────────────────────────── #
 
 _LOOP_INTERVAL = 1.0  # seconds; reschedule rate returned from flight loop
+
+# ── HTTP worker ────────────────────────────────────────────────────────────── #
+#
+# Bounded so a stalled network cannot grow the backlog without limit. Every
+# request carries timeout=5, so the worker can be blocked for at most that long
+# and the queue drains again; 8 slots is several ticks of headroom without
+# letting minutes of stale work accumulate.
+_WORK_QUEUE_MAX = 8
+# Slightly over the HTTP timeout, so a disable during an in-flight request
+# waits for it rather than abandoning it.
+_WORKER_JOIN_TIMEOUT = 6.0
 
 # ── Log levels ─────────────────────────────────────────────────────────────── #
 
@@ -181,8 +193,55 @@ class PythonInterface:
         self._post_error_count: int = 0
         self._post_skip_ticks: int = 0
 
-        # Serialise all HTTP work onto one daemon thread
+        # Serialise all HTTP work onto one daemon thread. Previously every
+        # caller spawned its own, including the flight loop, which meant a
+        # thread object allocated on X-Plane's main thread once per tick — and
+        # twice as often once the loop runs at 2 Hz.
         self._lock = threading.Lock()
+        self._work: queue.Queue = queue.Queue(maxsize=_WORK_QUEUE_MAX)
+        self._worker: threading.Thread | None = None
+        self._queue_full_logged = False
+
+    # ── Background HTTP worker ─────────────────────────────────────────────── #
+
+    def _submit(self, fn, *args) -> bool:
+        """
+        Hand work to the HTTP thread. Never blocks: this is called from the
+        flight loop, where blocking would stall a frame.
+
+        Returns False if the backlog is full and the work was dropped. For a
+        state POST that costs nothing — the next tick carries a fresher
+        snapshot, and a stale one is worthless — which is why dropping is
+        preferred over growing the queue or waiting.
+        """
+        try:
+            self._work.put_nowait((fn, args))
+        except queue.Full:
+            if not self._queue_full_logged:
+                self._queue_full_logged = True
+                self._log("WARNING", "HTTP backlog full — dropping work until it drains")
+            return False
+        self._queue_full_logged = False
+        return True
+
+    def _worker_loop(self) -> None:
+        """
+        Run submitted work in order until the sentinel arrives.
+
+        Every task is wrapped: an exception escaping here would end the thread
+        and silently stop all plugin HTTP for the rest of the session, with the
+        checklist simply never updating again and nothing to say why.
+        """
+        while True:
+            item = self._work.get()
+            if item is None:
+                return
+            fn, args = item
+            try:
+                fn(*args)
+            except Exception as exc:  # pylint: disable=broad-except
+                name = getattr(fn, "__name__", repr(fn))
+                self._log("ERROR", f"background task {name} failed: {exc!r}")
 
     # ── Logging helper ─────────────────────────────────────────────────────── #
 
@@ -200,12 +259,30 @@ class PythonInterface:
         self._log("INFO", f"ready — backend: {self._backend_url}")
         # Register the flight loop callback
         xp.registerFlightLoopCallback(self._flight_loop, _LOOP_INTERVAL, 0)
+
+        # A fresh queue and thread on every enable: threads cannot be
+        # restarted, and work left over from a previous enable is stale.
+        self._work = queue.Queue(maxsize=_WORK_QUEUE_MAX)
+        self._worker = threading.Thread(
+            target=self._worker_loop, daemon=True, name="xFlow-http"
+        )
+        self._worker.start()
+
         # Kick off session discovery in the background so we don't block enable
-        threading.Thread(target=self._fetch_session, daemon=True).start()
+        self._submit(self._fetch_session)
         return 1
 
     def XPluginDisable(self):
         xp.unregisterFlightLoopCallback(self._flight_loop, 0)
+        worker, self._worker = self._worker, None
+        if worker is not None:
+            try:
+                self._work.put_nowait(None)
+            except queue.Full:
+                # The thread is a daemon and will not outlive X-Plane, so a
+                # full queue here is not worth draining to make room.
+                pass
+            worker.join(timeout=_WORKER_JOIN_TIMEOUT)
 
     def XPluginStop(self):
         self._check_cmd.destroy()
@@ -259,7 +336,7 @@ class PythonInterface:
             if self._no_session_ticks >= self._SESSION_RETRY_TICKS:
                 self._no_session_ticks = 0
                 self._log("INFO", "no session — retrying session lookup")
-                threading.Thread(target=self._fetch_session, daemon=True).start()
+                self._submit(self._fetch_session)
             return _LOOP_INTERVAL
 
         self._no_session_ticks = 0
@@ -267,7 +344,7 @@ class PythonInterface:
         if self._active_ticks >= self._SESSION_REVALIDATE_TICKS:
             self._active_ticks = 0
             self._log("INFO", "re-validating session with server")
-            threading.Thread(target=self._fetch_session, daemon=True).start()
+            self._submit(self._fetch_session)
 
         state: dict[str, float | str] = {}
         changed = False
@@ -340,7 +417,7 @@ class PythonInterface:
         # that 1 POST/s to a local server is negligible.
         self._log("DEBUG", f"POSTing {len(state)} datarefs (changed={changed})")
         snapshot = dict(state)
-        threading.Thread(target=self._post_state, args=(snapshot,), daemon=True).start()
+        self._submit(self._post_state, snapshot)
 
         return _LOOP_INTERVAL
 
@@ -349,7 +426,7 @@ class PythonInterface:
     def _on_check_next(self, phase: int):
         if phase != 0:  # 0=BEGIN (key down); ignore CONTINUE and END
             return
-        threading.Thread(target=self._post_check_next, daemon=True).start()
+        self._submit(self._post_check_next)
 
     def _on_dump_watch(self, phase: int):
         if phase != 0:
@@ -383,7 +460,7 @@ class PythonInterface:
     def _on_report_miss(self, phase: int):
         if phase != 0:
             return
-        threading.Thread(target=self._post_report_miss, daemon=True).start()
+        self._submit(self._post_report_miss)
 
     # ── HTTP workers (daemon threads) ──────────────────────────────────────── #
 
@@ -564,7 +641,7 @@ class PythonInterface:
             self._log("INFO", "session expired — re-fetching session")
             with self._lock:
                 self._session_id = None
-            threading.Thread(target=self._fetch_session, daemon=True).start()
+            self._submit(self._fetch_session)
         else:
             self._log("INFO", f"unexpected status {status}")
 

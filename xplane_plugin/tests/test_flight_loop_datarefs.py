@@ -5,6 +5,7 @@ Mocks the `xp` module so no X-Plane installation is required.
 Focuses on the string-dataref (Type_Data / getDatas) branch.
 """
 
+import queue
 import sys
 import types
 import unittest
@@ -68,6 +69,24 @@ class _PluginTestBase(unittest.TestCase):
         return plugin
 
 
+    def _drain(self, plugin):
+        """
+        Run whatever the flight loop queued, synchronously and in order.
+
+        The plugin's worker thread is not started in these tests, so this
+        stands in for it. Deterministic, unlike asserting against a thread the
+        test did not wait for.
+        """
+        while True:
+            try:
+                item = plugin._work.get_nowait()
+            except queue.Empty:
+                return
+            if item is None:
+                return
+            fn, args = item
+            fn(*args)
+
 class TestFlightLoopStringDataref(_PluginTestBase):
 
     # -----------------------------------------------------------------------
@@ -91,6 +110,7 @@ class TestFlightLoopStringDataref(_PluginTestBase):
 
         with patch.object(plugin, "_post_state", side_effect=fake_post):
             plugin._flight_loop(1.0, 1.0, 1, None)
+            self._drain(plugin)
 
         self.assertEqual(posted.get("laminar/B738/fmc1/Line01_L"), "737-800W.1")
 
@@ -107,6 +127,7 @@ class TestFlightLoopStringDataref(_PluginTestBase):
 
         with patch.object(plugin, "_post_state"):
             plugin._flight_loop(1.0, 1.0, 1, None)
+            self._drain(plugin)
 
         xp.getDatas.assert_called_once_with(fake_dref, 0, 64)
 
@@ -122,6 +143,7 @@ class TestFlightLoopStringDataref(_PluginTestBase):
 
         with patch.object(plugin, "_post_state"):
             plugin._flight_loop(1.0, 1.0, 1, None)
+            self._drain(plugin)
 
         _, args, _ = xp.getDatas.mock_calls[0]
         offset_arg = args[1]
@@ -143,6 +165,7 @@ class TestFlightLoopStringDataref(_PluginTestBase):
         posted = {}
         with patch.object(plugin, "_post_state", side_effect=posted.update):
             plugin._flight_loop(1.0, 1.0, 1, None)
+            self._drain(plugin)
 
         self.assertEqual(posted.get("some/cdu/line"), "IDENT")
 
@@ -162,6 +185,7 @@ class TestFlightLoopStringDataref(_PluginTestBase):
         posted = {}
         with patch.object(plugin, "_post_state", side_effect=posted.update):
             plugin._flight_loop(1.0, 1.0, 1, None)
+            self._drain(plugin)
 
         xp.getDatas.assert_not_called()
         self.assertEqual(posted.get("sim/some/float"), 42.0)
@@ -179,6 +203,7 @@ class TestFlightLoopStringDataref(_PluginTestBase):
         posted = {}
         with patch.object(plugin, "_post_state", side_effect=posted.update):
             plugin._flight_loop(1.0, 1.0, 1, None)
+            self._drain(plugin)
 
         xp.getDatad.assert_called_once()
         xp.getDataf.assert_not_called()
@@ -201,6 +226,7 @@ class TestDataRefTypeCaching(_PluginTestBase):
         with patch.object(plugin, "_post_state"):
             for i in range(n):
                 plugin._flight_loop(1.0, 1.0, i, None)
+                self._drain(plugin)
 
     def test_type_is_read_once_per_path_not_once_per_tick(self):
         xp = self.xp_stub
@@ -286,3 +312,117 @@ class TestDataRefTypeCaching(_PluginTestBase):
 
         plugin._drefs = {p: v for p, v in plugin._drefs.items() if p in ["sim/a"]}
         self.assertEqual(set(plugin._drefs), {"sim/a"})
+
+
+class TestHttpWorker(_PluginTestBase):
+    """
+    All HTTP now goes through one daemon thread fed by a bounded queue, rather
+    than a thread spawned per call site — including one per flight-loop tick,
+    on X-Plane's main thread, about to double to 2 Hz.
+    """
+
+    def test_the_flight_loop_queues_rather_than_spawning(self):
+        xp = self.xp_stub
+        xp.findDataRef.return_value = object()
+        xp.getDataRefTypes.return_value = 2
+
+        plugin = self._make_plugin()
+        plugin._watch = ["sim/a"]
+
+        with patch("threading.Thread") as thread_cls:
+            plugin._flight_loop(1.0, 1.0, 1, None)
+
+        thread_cls.assert_not_called()
+        self.assertEqual(plugin._work.qsize(), 1)
+
+    def test_the_worker_survives_a_failing_task(self):
+        """
+        The one that matters. An exception escaping the worker would end the
+        thread and silently stop all plugin HTTP for the rest of the session —
+        the checklist would simply never update again, with nothing to say why.
+        """
+        plugin = self._make_plugin()
+        ran = []
+
+        def boom():
+            raise RuntimeError("network gremlin")
+
+        plugin._work.put((boom, ()))
+        plugin._work.put((lambda: ran.append("after"), ()))
+        plugin._work.put(None)
+
+        with patch.object(plugin, "_log") as log:
+            plugin._worker_loop()
+
+        self.assertEqual(ran, ["after"], "worker stopped after a failing task")
+        errors = [c for c in log.call_args_list if c.args and c.args[0] == "ERROR"]
+        self.assertEqual(len(errors), 1)
+        self.assertIn("network gremlin", errors[0].args[1])
+
+    def test_a_full_backlog_drops_work_instead_of_blocking(self):
+        """
+        _submit is called from the flight loop, so it must never block: a stall
+        there is a stalled frame. Dropping a state POST costs nothing, because
+        the next tick carries a fresher snapshot.
+        """
+        plugin = self._make_plugin()
+        for _ in range(self.module._WORK_QUEUE_MAX):
+            self.assertTrue(plugin._submit(lambda: None))
+
+        with patch.object(plugin, "_log") as log:
+            self.assertFalse(plugin._submit(lambda: None))
+            self.assertFalse(plugin._submit(lambda: None))
+
+        warnings = [c for c in log.call_args_list if c.args and c.args[0] == "WARNING"]
+        self.assertEqual(len(warnings), 1, "backlog warning should not repeat per tick")
+
+    def test_the_backlog_warning_returns_after_it_drains(self):
+        plugin = self._make_plugin()
+        for _ in range(self.module._WORK_QUEUE_MAX):
+            plugin._submit(lambda: None)
+        plugin._submit(lambda: None)           # full → warns
+        plugin._work.get_nowait()              # drains one slot
+        self.assertTrue(plugin._submit(lambda: None))
+
+        for _ in range(self.module._WORK_QUEUE_MAX):
+            try:
+                plugin._work.get_nowait()
+            except queue.Empty:
+                break
+        for _ in range(self.module._WORK_QUEUE_MAX):
+            plugin._submit(lambda: None)
+
+        with patch.object(plugin, "_log") as log:
+            plugin._submit(lambda: None)
+        warnings = [c for c in log.call_args_list if c.args and c.args[0] == "WARNING"]
+        self.assertEqual(len(warnings), 1, "a new backlog episode should warn again")
+
+    def test_enable_starts_a_worker_and_disable_stops_it(self):
+        plugin = self._make_plugin()
+        with patch.object(plugin, "_fetch_session"):
+            plugin.XPluginEnable()
+            worker = plugin._worker
+            self.assertIsNotNone(worker)
+            self.assertTrue(worker.is_alive())
+
+            plugin.XPluginDisable()
+            worker.join(timeout=2)
+            self.assertFalse(worker.is_alive())
+            self.assertIsNone(plugin._worker)
+
+    def test_a_second_enable_gets_a_fresh_worker(self):
+        """Threads cannot be restarted, so enable must build a new one."""
+        plugin = self._make_plugin()
+        with patch.object(plugin, "_fetch_session"):
+            plugin.XPluginEnable()
+            first = plugin._worker
+            plugin.XPluginDisable()
+            first.join(timeout=2)
+
+            plugin.XPluginEnable()
+            second = plugin._worker
+            self.assertIsNotNone(second)
+            self.assertIsNot(second, first)
+            self.assertTrue(second.is_alive())
+            plugin.XPluginDisable()
+            second.join(timeout=2)
