@@ -16,7 +16,6 @@ from checklist.models import (
     FlightSessionAttribute,
     Procedure,
     RuleMissReport,
-    generate_api_key,
 )
 from checklist.tests.testFactories import AttributeFactory, CheckItemFactory, SOPFactory
 
@@ -41,11 +40,7 @@ class _Base(TestCase):
     def setUp(self):
         self.user = User.objects.create_user(username="pilot", password="pw")
         self.profile = self.user.profile
-        raw, hashed, prefix = generate_api_key()
-        self.raw_key = raw
-        self.profile.api_key_hash = hashed
-        self.profile.api_key_prefix = prefix
-        self.profile.save()
+        self.raw_key = self.profile.set_api_key()
 
         self.sop = SOPFactory()
         self.procedure = Procedure.objects.create(

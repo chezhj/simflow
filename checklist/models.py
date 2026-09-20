@@ -4,9 +4,9 @@ Main models module for al database objects
 
 # pylint: disable=no-member
 
+import hashlib
 import secrets
 
-from django.contrib.auth.hashers import make_password
 from colorfield.fields import ColorField
 from django.conf import settings
 from django.db import models
@@ -22,14 +22,31 @@ def _generate_session_key():
     return f"{letters}-{digits}"
 
 
+def api_key_digest(raw: str) -> str:
+    """
+    Digest an API key for storage and lookup.
+
+    Plain SHA-256, deliberately, where a password would use a slow KDF. A KDF
+    exists to make *low-entropy, human-chosen* passwords expensive to brute
+    force offline; these keys are 256 bits of CSPRNG output from
+    generate_api_key, so there is no search space to protect and the slow hash
+    buys nothing. It cost plenty: PBKDF2 measured ~265 ms per call on the
+    production host, paid on every plugin request at 1-2 Hz per flying pilot.
+    """
+    return hashlib.sha256(raw.encode()).hexdigest()
+
+
 def generate_api_key():
     """
     Generate a new API key for plugin authentication.
-    Returns (raw, hashed, prefix) — only hashed and prefix are persisted.
+    Returns (raw, digest, prefix) — only digest and prefix are persisted.
     The raw key is shown to the user once and never stored.
+
+    32 bytes from secrets.token_urlsafe is 256 bits of entropy; see
+    api_key_digest for why that matters to how it is stored.
     """
     raw = "fvw_" + secrets.token_urlsafe(32)
-    return raw, make_password(raw), raw[:8]
+    return raw, api_key_digest(raw), raw[:8]
 
 
 class SOP(models.Model):
@@ -208,11 +225,38 @@ class UserProfile(models.Model):
         related_name="profile",
     )
     simbrief_id = models.CharField(max_length=20, blank=True)
+
+    # SHA-256 hex digest of the raw key. Unique so two accounts can never share
+    # a key; nullable, and NULLs do not collide, so rows minted before this
+    # column existed are unaffected.
+    api_key_sha256 = models.CharField(
+        max_length=64, blank=True, null=True, unique=True
+    )
+    # Legacy PBKDF2 hash, kept only so keys minted before api_key_sha256 keep
+    # working. require_api_key upgrades such a row in place the first time it
+    # is used, so this column drains on its own and can be dropped a release
+    # later. Nothing writes it any more.
     api_key_hash = models.CharField(max_length=128, blank=True, null=True)
+    # First 8 characters of the raw key. Shown on the profile page so a key can
+    # be recognised, and used to narrow the legacy lookup below.
     api_key_prefix = models.CharField(max_length=8, blank=True, null=True)
 
     def __str__(self) -> str:
         return f"Profile({self.user.username})"
+
+    def set_api_key(self) -> str:
+        """
+        Mint a new API key, persist its digest and prefix, and return the raw
+        key — which the caller must show immediately, because it is not stored
+        and cannot be recovered. Any previous key for this profile, legacy hash
+        included, stops working.
+        """
+        raw, digest, prefix = generate_api_key()
+        self.api_key_sha256 = digest
+        self.api_key_prefix = prefix
+        self.api_key_hash = None
+        self.save(update_fields=["api_key_sha256", "api_key_prefix", "api_key_hash"])
+        return raw
 
 
 class UserAttributeDefault(models.Model):

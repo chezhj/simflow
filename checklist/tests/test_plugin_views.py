@@ -7,11 +7,12 @@ from datetime import datetime, timezone
 from unittest.mock import patch
 
 from django.contrib.auth import get_user_model
-from django.contrib.auth.hashers import check_password
+from django.contrib.auth.hashers import check_password, make_password
 from django.test import TestCase
 from django.urls import reverse
 
 from checklist.models import (
+    api_key_digest,
     Attribute,
     FlightItemState,
     FlightSession,
@@ -38,11 +39,7 @@ class TestPluginCheckNextAuth(TestCase):
     def setUp(self):
         self.user = User.objects.create_user(username="pilot", password="pw")
         self.profile = self.user.profile
-        raw, hashed, prefix = generate_api_key()
-        self.raw_key = raw
-        self.profile.api_key_hash = hashed
-        self.profile.api_key_prefix = prefix
-        self.profile.save()
+        self.raw_key = self.profile.set_api_key()
 
         sop = SOPFactory()
         procedure = Procedure.objects.create(title="Before Start", step=1, slug="before-start", sop=sop)
@@ -61,46 +58,24 @@ class TestPluginCheckNextAuth(TestCase):
         response = self.client.get(URL, HTTP_AUTHORIZATION=f"Bearer {self.raw_key}")
         self.assertEqual(response.status_code, 405)
 
-    def test_auth_cost_does_not_scale_with_account_count(self):
+    def test_a_current_key_is_resolved_without_hashing_at_all(self):
         """
-        Resolving a key must not verify every stored hash.
-
-        check_password runs a deliberately slow KDF (~200 ms), and the plugin
-        POSTs at 1 Hz per active pilot, so a scan over all accounts turns each
-        request into users x 200 ms of CPU. Candidates are narrowed by
-        api_key_prefix first, so the call count stays flat as accounts are added.
+        The whole point of the SHA-256 column. check_password runs a
+        deliberately slow KDF — ~265 ms on the production host — and the plugin
+        POSTs at 1-2 Hz per flying pilot, so paying it per request capped the
+        server at a couple of concurrent pilots per core. A current key must
+        cost zero slow hashes, no matter how many accounts exist.
         """
         for n in range(20):
-            other = User.objects.create_user(username=f"other{n}", password="pw")
-            raw, hashed, prefix = generate_api_key()
-            other.profile.api_key_hash = hashed
-            other.profile.api_key_prefix = prefix
-            other.profile.save()
+            User.objects.create_user(username=f"other{n}", password="pw").profile.set_api_key()
 
-        # The caller is created last so its profile sorts behind every decoy.
-        # A scan over all accounts would therefore hash all 20 decoys first,
-        # while a prefix lookup goes straight to it — that gap is what this
-        # test measures, and it is invisible if the caller happens to sort first.
-        caller = User.objects.create_user(username="lastpilot", password="pw")
-        raw_key, hashed, prefix = generate_api_key()
-        caller.profile.api_key_hash = hashed
-        caller.profile.api_key_prefix = prefix
-        caller.profile.save()
-
-        with patch(
-            "checklist.plugin_views.check_password", wraps=check_password
-        ) as spy:
-            response = _post(self.client, key=raw_key)
+        with patch("checklist.plugin_views.check_password") as spy:
+            response = _post(self.client, key=self.raw_key)
 
         self.assertNotEqual(response.status_code, 401)
-        self.assertLessEqual(
-            spy.call_count,
-            2,
-            "key lookup verified more hashes than the prefix should have matched",
-        )
+        spy.assert_not_called()
 
-    def test_unknown_prefix_verifies_no_hashes(self):
-        """A key whose prefix matches nothing is rejected without hashing at all."""
+    def test_unknown_key_is_rejected_without_hashing(self):
         with patch("checklist.plugin_views.check_password") as spy:
             response = _post(self.client, key="fvw_zzzznot-a-real-key")
 
@@ -108,16 +83,90 @@ class TestPluginCheckNextAuth(TestCase):
         spy.assert_not_called()
 
 
+class TestLegacyApiKeyUpgrade(TestCase):
+    """
+    Keys minted before api_key_sha256 existed carry only a PBKDF2 hash. They
+    must keep working — a pilot whose plugin stops authenticating after a
+    deploy has no way to diagnose it — and must move onto the fast path by
+    themselves, because the raw key exists only for the instant of a request.
+    """
+
+    def setUp(self):
+        self.user = User.objects.create_user(username="pilot", password="pw")
+        self.profile = self.user.profile
+
+        # A profile exactly as the previous release would have left it.
+        self.raw_key, _digest, prefix = generate_api_key()
+        self.profile.api_key_sha256 = None
+        self.profile.api_key_hash = make_password(self.raw_key)
+        self.profile.api_key_prefix = prefix
+        self.profile.save()
+
+        sop = SOPFactory()
+        procedure = Procedure.objects.create(
+            title="Before Start", step=1, slug="before-start", sop=sop
+        )
+        CheckItemFactory(procedure=procedure, step=1)
+        FlightSession.objects.create(
+            user_profile=self.profile, active_phase="before-start", is_active=True
+        )
+
+    def test_a_legacy_key_still_authenticates(self):
+        self.assertNotEqual(_post(self.client, key=self.raw_key).status_code, 401)
+
+    def test_first_use_writes_the_digest(self):
+        _post(self.client, key=self.raw_key)
+        self.profile.refresh_from_db()
+        self.assertEqual(self.profile.api_key_sha256, api_key_digest(self.raw_key))
+
+    def test_second_use_no_longer_pays_the_kdf(self):
+        """Upgraded in place, so the slow path is taken once and never again."""
+        _post(self.client, key=self.raw_key)  # upgrades
+
+        with patch("checklist.plugin_views.check_password") as spy:
+            response = _post(self.client, key=self.raw_key)
+
+        self.assertNotEqual(response.status_code, 401)
+        spy.assert_not_called()
+
+    def test_the_legacy_scan_is_narrowed_by_prefix(self):
+        """
+        Until every key has upgraded the old column is still scanned, so it
+        stays bounded: decoys that share no prefix are never hashed. The caller
+        is created last so an unnarrowed scan would hash all of them first.
+        """
+        for n in range(20):
+            other = User.objects.create_user(username=f"other{n}", password="pw")
+            raw, _d, prefix = generate_api_key()
+            other.profile.api_key_sha256 = None
+            other.profile.api_key_hash = make_password(raw)
+            other.profile.api_key_prefix = prefix
+            other.profile.save()
+
+        with patch(
+            "checklist.plugin_views.check_password", wraps=check_password
+        ) as spy:
+            response = _post(self.client, key=self.raw_key)
+
+        self.assertNotEqual(response.status_code, 401)
+        self.assertLessEqual(spy.call_count, 2)
+
+    def test_regenerating_clears_the_legacy_hash(self):
+        """A regenerated key must not leave the old PBKDF2 row behind to match."""
+        old_raw = self.raw_key
+        self.profile.set_api_key()
+        self.profile.refresh_from_db()
+
+        self.assertIsNone(self.profile.api_key_hash)
+        self.assertEqual(_post(self.client, key=old_raw).status_code, 401)
+
+
 class TestPluginCheckNextSession(TestCase):
 
     def setUp(self):
         self.user = User.objects.create_user(username="pilot", password="pw")
         self.profile = self.user.profile
-        raw, hashed, prefix = generate_api_key()
-        self.raw_key = raw
-        self.profile.api_key_hash = hashed
-        self.profile.api_key_prefix = prefix
-        self.profile.save()
+        self.raw_key = self.profile.set_api_key()
 
         self.sop = SOPFactory()
         self.procedure = Procedure.objects.create(
@@ -153,11 +202,7 @@ class TestPluginCheckNextHappyPath(TestCase):
     def setUp(self):
         self.user = User.objects.create_user(username="pilot", password="pw")
         self.profile = self.user.profile
-        raw, hashed, prefix = generate_api_key()
-        self.raw_key = raw
-        self.profile.api_key_hash = hashed
-        self.profile.api_key_prefix = prefix
-        self.profile.save()
+        self.raw_key = self.profile.set_api_key()
 
         self.sop = SOPFactory()
         self.procedure = Procedure.objects.create(
@@ -274,11 +319,7 @@ class TestPluginCheckNextAttributeFiltering(TestCase):
     def setUp(self):
         self.user = User.objects.create_user(username="pilot", password="pw")
         self.profile = self.user.profile
-        raw, hashed, prefix = generate_api_key()
-        self.raw_key = raw
-        self.profile.api_key_hash = hashed
-        self.profile.api_key_prefix = prefix
-        self.profile.save()
+        self.raw_key = self.profile.set_api_key()
 
         self.sop = SOPFactory()
         self.procedure = Procedure.objects.create(
@@ -342,11 +383,7 @@ class TestPluginCheckNextWarnItems(TestCase):
     def setUp(self):
         self.user = User.objects.create_user(username="pilot", password="pw")
         self.profile = self.user.profile
-        raw, hashed, prefix = generate_api_key()
-        self.raw_key = raw
-        self.profile.api_key_hash = hashed
-        self.profile.api_key_prefix = prefix
-        self.profile.save()
+        self.raw_key = self.profile.set_api_key()
 
         self.sop = SOPFactory()
         self.procedure = Procedure.objects.create(

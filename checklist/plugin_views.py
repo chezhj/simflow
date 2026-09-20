@@ -18,6 +18,7 @@ from django.views.decorators.csrf import csrf_exempt  # used inside require_api_
 from django.views.decorators.http import require_GET, require_POST
 
 from .models import (
+    api_key_digest,
     Attribute,
     CheckItem,
     FlightItemState,
@@ -101,21 +102,53 @@ def _session_log(session_id: int, entry: dict) -> None:
         f.write(json.dumps(entry) + "\n")
 
 
+def _resolve_api_key(raw_key: str):
+    """
+    Return the UserProfile owning raw_key, or None.
+
+    Two paths, in order:
+
+    1. SHA-256 — an indexed exact match. No hashing cost worth measuring, and
+       flat in the number of accounts.
+    2. Legacy PBKDF2 — for keys minted before api_key_sha256 existed. Narrowed
+       by api_key_prefix so it stays one slow hash rather than one per account,
+       and restricted to rows not yet upgraded. A successful match has the raw
+       key in hand, which is the only moment the digest can be computed, so it
+       is written then: every key upgrades itself on first use and path 2 is
+       never taken for it again. This is the same trick Django uses to move
+       passwords onto a new hasher at login.
+
+    There is no constant-time comparison here because there is no comparison to
+    make constant: path 1 is a database index lookup on a digest of 256 bits of
+    CSPRNG output, and path 2 defers to check_password, which is already
+    constant-time.
+    """
+    digest = api_key_digest(raw_key)
+
+    profile = UserProfile.objects.filter(api_key_sha256=digest).first()
+    if profile is not None:
+        return profile
+
+    for candidate in (
+        UserProfile.objects.filter(api_key_prefix=raw_key[:8], api_key_sha256=None)
+        .exclude(api_key_hash=None)
+    ):
+        if check_password(raw_key, candidate.api_key_hash):
+            candidate.api_key_sha256 = digest
+            candidate.save(update_fields=["api_key_sha256"])
+            logger.info(
+                "upgraded API key for %s to sha256", candidate.user.username
+            )
+            return candidate
+
+    return None
+
+
 def require_api_key(view_func):
     """
     Decorator for plugin endpoints. Resolves the UserProfile from an
     Authorization: Bearer <raw_key> header and attaches it to
     request.plugin_profile. Returns 401 if the key is missing or invalid.
-
-    Candidates are narrowed by api_key_prefix (the first 8 characters of the
-    raw key, stored alongside the hash by generate_api_key) before any hash is
-    verified. check_password runs a deliberately slow KDF — measured at ~265 ms
-    per call on the production host under Django 5.2 — so scanning every stored
-    key made each plugin request cost accounts x 265 ms: ~2.6 s at ten accounts,
-    ~13 s at fifty. The plugin POSTs state at 1 Hz per active pilot, which is
-    faster than that could be answered, so the backlog compounded rather than
-    settling. The prefix is a non-secret index, not a credential: a match still
-    has to clear check_password against the full key.
 
     Also applies @csrf_exempt — plugin requests have no CSRF token.
     """
@@ -124,17 +157,10 @@ def require_api_key(view_func):
     def wrapper(request, *args, **kwargs):
         auth = request.headers.get("Authorization", "")
         if auth.startswith("Bearer "):
-            raw_key = auth[7:]
-            prefix = raw_key[:8]
-            # Prefixes are not unique by construction (4 random characters after
-            # "fvw_"), so this stays a loop — it is just a very short one.
-            candidates = UserProfile.objects.filter(
-                api_key_prefix=prefix
-            ).exclude(api_key_hash=None)
-            for profile in candidates:
-                if check_password(raw_key, profile.api_key_hash):
-                    request.plugin_profile = profile
-                    return view_func(request, *args, **kwargs)
+            profile = _resolve_api_key(auth[7:])
+            if profile is not None:
+                request.plugin_profile = profile
+                return view_func(request, *args, **kwargs)
         return JsonResponse({}, status=401)
     return wrapper
 
