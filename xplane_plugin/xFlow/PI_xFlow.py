@@ -72,7 +72,24 @@ _MISS_COMMAND_DESC = "xFlow – Report rule miss for the first unchecked checkli
 
 # ── Flight loop interval ───────────────────────────────────────────────────── #
 
-_LOOP_INTERVAL = 1.0  # seconds; reschedule rate returned from flight loop
+# Seconds between flight-loop ticks. 0.5 halves the wait for a switch change
+# to be noticed; the measured main-thread cost of a tick is ~1-2 ms in the
+# largest phase, after 3.3 removed the per-tick type lookups.
+_DEFAULT_LOOP_INTERVAL = 0.5
+# Below this the loop re-reads the whole watch list absurdly often for no
+# further gain in responsiveness.
+_MIN_LOOP_INTERVAL = 0.1
+# The server marks the sim disconnected when the last contact is 5 s old
+# (`sim_connected = age < 5` in checklist/api_views.py). An interval at or
+# above that would make the connection badge flap, so the ceiling sits below
+# it with room for the request itself.
+_MAX_LOOP_INTERVAL = 4.0
+
+# Durations that used to be written directly as tick counts, which was only
+# correct while a tick was exactly one second. They are converted with
+# _ticks_for() against the configured interval.
+_SESSION_RETRY_SECONDS = 30.0
+_SESSION_REVALIDATE_SECONDS = 300.0
 
 # ── HTTP worker ────────────────────────────────────────────────────────────── #
 #
@@ -88,6 +105,17 @@ _WORKER_JOIN_TIMEOUT = 6.0
 # ── Log levels ─────────────────────────────────────────────────────────────── #
 
 _LEVELS = {"DEBUG": 0, "INFO": 1, "WARNING": 2, "ERROR": 3}
+
+
+def _ticks_for(seconds: float, interval: float) -> int:
+    """
+    Flight-loop ticks spanning `seconds`, at least one.
+
+    The loop counts ticks, not time, so every duration has to be divided by
+    the interval. Before the interval was configurable these divisions were
+    written out as literals against a 1.0 s tick.
+    """
+    return max(1, round(seconds / interval))
 
 # ── Config sentinel ────────────────────────────────────────────────────────── #
 #
@@ -140,6 +168,23 @@ class PythonInterface:
         )
         raw_level = cfg.get("xflow", "log_level", fallback="INFO").upper()
         self._log_level = _LEVELS.get(raw_level, _LEVELS["INFO"])
+
+        # getfloat's fallback covers a missing key but not a malformed value —
+        # it raises ValueError on one — and this runs during __init__, so an
+        # unparseable entry would stop the plugin loading at all.
+        try:
+            raw_interval = cfg.getfloat(
+                "xflow", "poll_interval", fallback=_DEFAULT_LOOP_INTERVAL
+            )
+        except ValueError:
+            raw_interval = _DEFAULT_LOOP_INTERVAL
+            self._bad_interval = cfg.get("xflow", "poll_interval", fallback="")
+        else:
+            self._bad_interval = ""
+        self._loop_interval = min(
+            max(raw_interval, _MIN_LOOP_INTERVAL), _MAX_LOOP_INTERVAL
+        )
+        self._configured_interval = raw_interval
         self._check_cmd = CheckCommand(
             _COMMAND_FULL, _COMMAND_DESC, self._on_check_next
         )
@@ -176,12 +221,14 @@ class PythonInterface:
 
         # Ticks since last session-fetch attempt (used to retry when no session)
         self._no_session_ticks: int = 0
-        self._SESSION_RETRY_TICKS: int = 30  # retry every ~30 s when session_id is None
+        self._SESSION_RETRY_TICKS: int = _ticks_for(
+            _SESSION_RETRY_SECONDS, self._loop_interval
+        )
 
         # Ticks since last session re-validation (catches server-side session replacement)
         self._active_ticks: int = 0
-        self._SESSION_REVALIDATE_TICKS: int = (
-            300  # re-check every ~5 min when connected
+        self._SESSION_REVALIDATE_TICKS: int = _ticks_for(
+            _SESSION_REVALIDATE_SECONDS, self._loop_interval
         )
 
         # Exponential backoff for state POST network errors.
@@ -257,8 +304,22 @@ class PythonInterface:
 
     def XPluginEnable(self):
         self._log("INFO", f"ready — backend: {self._backend_url}")
+        if self._bad_interval:
+            self._log(
+                "WARNING",
+                f"poll_interval {self._bad_interval!r} is not a number — "
+                f"using {self._loop_interval}s",
+            )
+        elif self._configured_interval != self._loop_interval:
+            self._log(
+                "WARNING",
+                f"poll_interval {self._configured_interval}s is outside "
+                f"{_MIN_LOOP_INTERVAL}-{_MAX_LOOP_INTERVAL}s — "
+                f"using {self._loop_interval}s",
+            )
+        self._log("INFO", f"flight loop interval: {self._loop_interval}s")
         # Register the flight loop callback
-        xp.registerFlightLoopCallback(self._flight_loop, _LOOP_INTERVAL, 0)
+        xp.registerFlightLoopCallback(self._flight_loop, self._loop_interval, 0)
 
         # A fresh queue and thread on every enable: threads cannot be
         # restarted, and work left over from a previous enable is stale.
@@ -329,7 +390,7 @@ class PythonInterface:
         with self._lock:
             blocked = self._blocked
         if blocked:
-            return _LOOP_INTERVAL
+            return self._loop_interval
 
         if self._session_id is None:
             self._no_session_ticks += 1
@@ -337,7 +398,7 @@ class PythonInterface:
                 self._no_session_ticks = 0
                 self._log("INFO", "no session — retrying session lookup")
                 self._submit(self._fetch_session)
-            return _LOOP_INTERVAL
+            return self._loop_interval
 
         self._no_session_ticks = 0
         self._active_ticks += 1
@@ -410,7 +471,7 @@ class PythonInterface:
         with self._lock:
             if self._post_skip_ticks > 0:
                 self._post_skip_ticks -= 1
-                return _LOOP_INTERVAL
+                return self._loop_interval
 
         # Always POST — keeps last_plugin_contact fresh (heartbeat) and
         # bootstraps the watch list on first tick. Dataref data is small enough
@@ -419,7 +480,7 @@ class PythonInterface:
         snapshot = dict(state)
         self._submit(self._post_state, snapshot)
 
-        return _LOOP_INTERVAL
+        return self._loop_interval
 
     # ── Command handler ────────────────────────────────────────────────────── #
 
@@ -610,7 +671,7 @@ class PythonInterface:
                 self._post_error_count += 1
                 n = self._post_error_count
                 backoff = min(10 * (2 ** (n - 1)), 60)  # 10 → 20 → 40 → 60s cap
-                self._post_skip_ticks = int(backoff)
+                self._post_skip_ticks = _ticks_for(backoff, self._loop_interval)
             self._log(
                 "ERROR", f"{_classify_error(exc)} — retry in {backoff}s (error #{n})"
             )

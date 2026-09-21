@@ -426,3 +426,112 @@ class TestHttpWorker(_PluginTestBase):
             self.assertTrue(second.is_alive())
             plugin.XPluginDisable()
             second.join(timeout=2)
+
+
+class TestLoopInterval(_PluginTestBase):
+    """
+    The tick interval is configurable, which means every duration the loop
+    measures in ticks has to be divided by it. Three were written as literals
+    against a 1.0 s tick and would have silently halved at 0.5 s.
+    """
+
+    def _plugin_with(self, ini_body):
+        """Build a plugin whose config.ini contains ini_body."""
+        import configparser
+
+        def fake_read(self_cfg, *a, **kw):
+            self_cfg.read_string("[xflow]\n" + ini_body)
+
+        with patch.object(configparser.ConfigParser, "read", fake_read):
+            return self.module.PythonInterface()
+
+    # ── Parsing and clamping ────────────────────────────────────────────────
+
+    def test_default_is_two_hertz(self):
+        self.assertEqual(self._plugin_with("")._loop_interval, 0.5)
+
+    def test_a_configured_value_is_used(self):
+        self.assertEqual(self._plugin_with("poll_interval = 1.0\n")._loop_interval, 1.0)
+
+    def test_values_below_the_floor_are_clamped(self):
+        p = self._plugin_with("poll_interval = 0.001\n")
+        self.assertEqual(p._loop_interval, self.module._MIN_LOOP_INTERVAL)
+
+    def test_values_above_the_ceiling_are_clamped(self):
+        """
+        The server treats the sim as disconnected once contact is 5 s old
+        (`sim_connected = age < 5`, checklist/api_views.py), so an interval at
+        or above that would make the badge flap.
+        """
+        p = self._plugin_with("poll_interval = 30\n")
+        self.assertEqual(p._loop_interval, self.module._MAX_LOOP_INTERVAL)
+        self.assertLess(self.module._MAX_LOOP_INTERVAL, 5.0)
+
+    def test_a_malformed_value_does_not_stop_the_plugin_loading(self):
+        """
+        getfloat's fallback covers a missing key but raises on a malformed
+        value, and this is parsed in __init__ — so an unparseable entry would
+        otherwise prevent the plugin loading at all.
+        """
+        p = self._plugin_with("poll_interval = banana\n")
+        self.assertEqual(p._loop_interval, 0.5)
+        self.assertEqual(p._bad_interval, "banana")
+
+    # ── Durations that were written as tick counts ──────────────────────────
+
+    def test_ticks_for_converts_seconds_at_any_interval(self):
+        ticks_for = self.module._ticks_for
+        self.assertEqual(ticks_for(30, 1.0), 30)
+        self.assertEqual(ticks_for(30, 0.5), 60)
+        self.assertEqual(ticks_for(0.1, 5.0), 1, "never rounds down to zero ticks")
+
+    def test_session_retry_stays_thirty_seconds_at_any_interval(self):
+        for interval, expected in ((1.0, 30), (0.5, 60), (2.0, 15)):
+            with self.subTest(interval=interval):
+                p = self._plugin_with(f"poll_interval = {interval}\n")
+                self.assertEqual(p._SESSION_RETRY_TICKS, expected)
+                self.assertAlmostEqual(p._SESSION_RETRY_TICKS * interval, 30.0)
+
+    def test_session_revalidate_stays_five_minutes_at_any_interval(self):
+        for interval in (1.0, 0.5, 2.0):
+            with self.subTest(interval=interval):
+                p = self._plugin_with(f"poll_interval = {interval}\n")
+                self.assertAlmostEqual(p._SESSION_REVALIDATE_TICKS * interval, 300.0)
+
+    def test_the_backoff_waits_the_number_of_seconds_it_logs(self):
+        """
+        _post_state logs "retry in 10s" and then sets a tick count. At 0.5 s a
+        literal 10 would have waited 5 s, so the message would have been wrong.
+        """
+        p = self._plugin_with("poll_interval = 0.5\n")
+        p._session_id = 1
+        p._api_key = "k"
+
+        with patch.object(p, "_http_post_json", side_effect=OSError("down")):
+            p._post_state({})
+
+        self.assertEqual(p._post_error_count, 1)
+        self.assertEqual(p._post_skip_ticks, 20)          # 10 s / 0.5 s
+        self.assertAlmostEqual(p._post_skip_ticks * p._loop_interval, 10.0)
+
+    # ── The interval actually drives the loop ───────────────────────────────
+
+    def test_the_flight_loop_reschedules_at_the_configured_interval(self):
+        xp = self.xp_stub
+        xp.findDataRef.return_value = object()
+        xp.getDataRefTypes.return_value = 2
+
+        p = self._plugin_with("poll_interval = 1.5\n")
+        p._session_id = 1
+        p._api_key = "k"
+        p._watch = ["sim/a"]
+
+        self.assertEqual(p._flight_loop(1.0, 1.0, 1, None), 1.5)
+
+    def test_registration_uses_the_configured_interval(self):
+        p = self._plugin_with("poll_interval = 1.5\n")
+        with patch.object(p, "_fetch_session"):
+            p.XPluginEnable()
+            p.XPluginDisable()
+        args = self.xp_stub.registerFlightLoopCallback.call_args.args
+        self.assertEqual(args[1], 1.5)
