@@ -58,13 +58,27 @@ Answers recorded 2026-09-18.
 | | Check | Answer | Consequence |
 |---|---|---|---|
 | [x] | 0.1 Filesystem | **XFS** | SQLite stays. Phase 4 proceeds as written; no MySQL migration. |
-| [x] | 0.2 Backup method | **Plain copy** | WAL blocked until `activate.sh` uses the backup API. Spec below. |
+| [x] | 0.2 Backup method | **Plain copy** → **backup API, www_installer v1.3.0** | Released 2026-09-22. 4.1 unblocked; 4.2 confirms it on the server. |
 | [x] | 0.3 `is_secure()` | **True** (inferred, see below) | 6.2 is safe; `SECURE_PROXY_SSL_HEADER` not needed. |
 | [x] | 0.4 Outbound mail | **Available** | 2.2 proceeds; SMTP details needed at that step. |
 | [x] | 0.5 Writable release dir | **Confirmed** | The `LOGGING` block already pushed cannot break the boot. |
 | [x] | 0.6 Baseline | **0.31 s median** | Lower than predicted. Revises 3.1 — see below. |
 
 ### 0.2 result — exact backup specification
+
+> **✅ Shipped in www_installer v1.3.0** (2026-09-22, PR chezhj/www_installer#4).
+> `activate.sh` backs up through SQLite's backup API (verified, then renamed into
+> place), keeps the newest `SQLITE_BACKUP_KEEP` (default 10), and
+> `rollback.sh --restore-db` restores through the API, with a safety copy taken
+> first. Server `sqlite3` is 3.26.0. Plan and as-built notes:
+> [`docs/SQLITE_BACKUP_PLAN.md`](https://github.com/chezhj/www_installer/blob/main/docs/SQLITE_BACKUP_PLAN.md).
+> The spec below is kept for history; the shipped version differs in detail.
+>
+> Two corrections to what follows: (1) a plain copy is *not* safe today,
+> because `activate.sh` takes it before stopping the app, so the copy can catch
+> a commit halfway through; (2) the `rollback.sh --restore-db` path needs the same
+> fix. A `cp` restore leaves a stale `-wal` next to the file it restored, and
+> SQLite would replay it onto the restored data. Both are fixed in v1.3.0.
 
 `activate.sh` currently copies `db.sqlite3` as a plain file. That is safe today
 (rollback journal mode keeps the file self-contained between transactions) but
@@ -404,7 +418,7 @@ means while rules compare exact values. Not a risk worth taking pre-launch for
 something **4.1 (WAL)** solves properly.
 
 > **Consequence**: this was the hedge for WAL being blocked on the
-> `backup_sqlite` change in `www_installer`. With the hedge gone, that change is
+> `backup_sqlite` change in `www_installer` (shipped in v1.3.0, so 4.1 is unblocked). With the hedge gone, that change is
 > what write concurrency now rests on — at 2 Hz across ten concurrent pilots,
 > ~20 writes/sec against a rollback-journal database where writers block
 > readers.
@@ -426,7 +440,9 @@ below is void. Otherwise:
 
 ### [ ] 4.1 **[code]** SQLite WAL, IMMEDIATE transactions, busy timeout
 
-Blocked until 0.2 confirms the backup is WAL-safe.
+~~Blocked until 0.2 confirms the backup is WAL-safe.~~ **Unblocked**: the
+backup and restore are WAL-safe since www_installer v1.3.0. Make sure the server's
+`~/deploy-tools` is on v1.3.0 or later before the release that turns WAL on.
 
 ```python
 "OPTIONS": {
@@ -448,8 +464,19 @@ lets 3.2's doubled poll rate stay free.
 sqlite3 db.sqlite3 'PRAGMA journal_mode;'   # expect: wal
 ```
 
-Then take a backup by whatever route `activate.sh` uses, restore it to a scratch
-copy, and confirm the most recent writes are present.
+Then check the backup that deploy's `activate.sh` took. Its log line is
+`backup ok: …/db.sqlite3.backup_<ts> (N bytes, T s)`:
+
+```bash
+cd ~/domains/shared/simflow
+b=$(ls -1 db.sqlite3.backup_* | sort | tail -1)
+sqlite3 "$b" 'PRAGMA integrity_check;'                       # expect: ok
+sqlite3 "$b" 'SELECT max(id) FROM checklist_flightsession;'  # compare with the live db
+```
+
+The restore path does not need testing against the live app. www_installer's
+`tests/sqlite_backup_test.sh` covers it: a stale `-wal`, a refused safety copy, and
+`--force-restore`.
 
 ### 🚦 Gate 4
 
@@ -574,7 +601,7 @@ plugin → fly a short leg. Then check `logs/django.log` is empty of errors.
 
 ```
 0.1 (NFS)        → Phase 4 entirely (SQLite tuning vs MySQL migration)
-0.2 (backup)     → 4.1 (WAL must not precede a WAL-safe backup)
+0.2 (backup)     → 4.1 (WAL must not precede a WAL-safe backup) — met: www_installer v1.3.0
 0.3 (is_secure)  → 6.1, 6.2
 0.4 (SMTP)       → 2.2
 0.5 (writable)   → validates the LOGGING block already pushed
