@@ -66,6 +66,14 @@ Answers recorded 2026-09-18.
 
 ### 0.2 result — exact backup specification
 
+> **Superseded by the implementation plan in `www_installer`:
+> [`docs/SQLITE_BACKUP_PLAN.md`](https://github.com/chezhj/www_installer/blob/claude/sqlite-backup-plan-fbj0yj/docs/SQLITE_BACKUP_PLAN.md).**
+> Two corrections to what follows: (1) a plain copy is *not* safe today,
+> because `activate.sh` takes it before stopping the app, so the copy can catch
+> a commit halfway through; (2) the `rollback.sh --restore-db` path needs the same
+> fix. A `cp` restore leaves a stale `-wal` next to the file it restored, and
+> SQLite would replay it onto the restored data. That needs fixing before 4.1.
+
 `activate.sh` currently copies `db.sqlite3` as a plain file. That is safe today
 (rollback journal mode keeps the file self-contained between transactions) but
 becomes **unsafe the moment WAL is enabled**: recent commits live in the `-wal`
