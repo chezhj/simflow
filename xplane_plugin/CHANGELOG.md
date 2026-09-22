@@ -1,5 +1,13 @@
 # xFlow Plugin Changelog
 
+## [1.1.0] — 2026-09-22
+
+### Changed
+- Added better version checks
+- changed threading model
+- configurable refresh rate
+- improved cache mechanism 
+
 ## [1.0.2] — 2026-07-31
 
 ### Changed
