@@ -9,15 +9,20 @@ Installation:
   2. Create the folder:
        X-Plane 12/Resources/plugins/PythonPlugins/xFlow/
 
-  3. Copy config.ini into that folder:
+  3. Copy config.ini.example to config.ini in that folder:
        X-Plane 12/Resources/plugins/PythonPlugins/xFlow/config.ini
 
+     The release zip ships config.ini.example rather than config.ini, so
+     extracting an upgrade over an existing install cannot overwrite settings
+     that are already there.
+
   Edit config.ini:
-    api_key     — paste your key from the SimFlow profile page
-    backend_url — leave as-is for local dev; change for production
-    log_level   — DEBUG / INFO / WARNING / ERROR (default: INFO)
-                  DEBUG shows watch list contents, dataref values, raw responses
-                  WARNING suppresses INFO but shows missing/broken datarefs
+    api_key       — paste your key from the SimFlow profile page
+    backend_url   — leave as-is for local dev; change for production
+    log_level     — DEBUG / INFO / WARNING / ERROR (default: INFO)
+                    DEBUG shows watch list contents, dataref values, raw responses
+                    WARNING suppresses INFO but shows missing/broken datarefs
+    poll_interval — seconds between dataref reads (default 0.5, range 0.1-4.0)
 
 Commands registered:
   xFlow/check_next_item  — manually check the next checklist item
@@ -30,6 +35,7 @@ from __future__ import annotations
 
 import configparser
 import json
+import queue
 import re
 import threading
 import urllib.error
@@ -71,11 +77,50 @@ _MISS_COMMAND_DESC = "xFlow – Report rule miss for the first unchecked checkli
 
 # ── Flight loop interval ───────────────────────────────────────────────────── #
 
-_LOOP_INTERVAL = 1.0  # seconds; reschedule rate returned from flight loop
+# Seconds between flight-loop ticks. 0.5 halves the wait for a switch change
+# to be noticed; the measured main-thread cost of a tick is ~1-2 ms in the
+# largest phase, after 3.3 removed the per-tick type lookups.
+_DEFAULT_LOOP_INTERVAL = 0.5
+# Below this the loop re-reads the whole watch list absurdly often for no
+# further gain in responsiveness.
+_MIN_LOOP_INTERVAL = 0.1
+# The server marks the sim disconnected when the last contact is 5 s old
+# (`sim_connected = age < 5` in checklist/api_views.py). An interval at or
+# above that would make the connection badge flap, so the ceiling sits below
+# it with room for the request itself.
+_MAX_LOOP_INTERVAL = 4.0
+
+# Durations that used to be written directly as tick counts, which was only
+# correct while a tick was exactly one second. They are converted with
+# _ticks_for() against the configured interval.
+_SESSION_RETRY_SECONDS = 30.0
+_SESSION_REVALIDATE_SECONDS = 300.0
+
+# ── HTTP worker ────────────────────────────────────────────────────────────── #
+#
+# Bounded so a stalled network cannot grow the backlog without limit. Every
+# request carries timeout=5, so the worker can be blocked for at most that long
+# and the queue drains again; 8 slots is several ticks of headroom without
+# letting minutes of stale work accumulate.
+_WORK_QUEUE_MAX = 8
+# Slightly over the HTTP timeout, so a disable during an in-flight request
+# waits for it rather than abandoning it.
+_WORKER_JOIN_TIMEOUT = 6.0
 
 # ── Log levels ─────────────────────────────────────────────────────────────── #
 
 _LEVELS = {"DEBUG": 0, "INFO": 1, "WARNING": 2, "ERROR": 3}
+
+
+def _ticks_for(seconds: float, interval: float) -> int:
+    """
+    Flight-loop ticks spanning `seconds`, at least one.
+
+    The loop counts ticks, not time, so every duration has to be divided by
+    the interval. Before the interval was configurable these divisions were
+    written out as literals against a 1.0 s tick.
+    """
+    return max(1, round(seconds / interval))
 
 # ── Config sentinel ────────────────────────────────────────────────────────── #
 #
@@ -128,6 +173,23 @@ class PythonInterface:
         )
         raw_level = cfg.get("xflow", "log_level", fallback="INFO").upper()
         self._log_level = _LEVELS.get(raw_level, _LEVELS["INFO"])
+
+        # getfloat's fallback covers a missing key but not a malformed value —
+        # it raises ValueError on one — and this runs during __init__, so an
+        # unparseable entry would stop the plugin loading at all.
+        try:
+            raw_interval = cfg.getfloat(
+                "xflow", "poll_interval", fallback=_DEFAULT_LOOP_INTERVAL
+            )
+        except ValueError:
+            raw_interval = _DEFAULT_LOOP_INTERVAL
+            self._bad_interval = cfg.get("xflow", "poll_interval", fallback="")
+        else:
+            self._bad_interval = ""
+        self._loop_interval = min(
+            max(raw_interval, _MIN_LOOP_INTERVAL), _MAX_LOOP_INTERVAL
+        )
+        self._configured_interval = raw_interval
         self._check_cmd = CheckCommand(
             _COMMAND_FULL, _COMMAND_DESC, self._on_check_next
         )
@@ -147,19 +209,31 @@ class PythonInterface:
         # Watch list: dataref path → cached XP DataRef handle
         # Populated from server responses; starts empty.
         self._watch: list[str] = []
-        self._drefs: dict[str, object] = {}  # path → xp.findDataRef() result
+        # path → (xp.findDataRef() result, XPLM type bitmask). The type is
+        # cached with the handle rather than read per tick: a dataref's type is
+        # fixed when it is registered, so getDataRefTypes was being called once
+        # per watched path per tick to be told the same thing every time. The
+        # two share a lifetime, so caching them together makes them impossible
+        # to invalidate separately.
+        self._drefs: dict[str, tuple] = {}
+        # Paths already reported as unresolvable, so the warning is logged once
+        # rather than every tick. Cleared whenever the watch list or session
+        # changes, so a reloaded aircraft reports afresh.
+        self._missing_drefs: set[str] = set()
 
         # Last sent values — used to detect changes before POSTing
         self._last_values: dict[str, float | str] = {}
 
         # Ticks since last session-fetch attempt (used to retry when no session)
         self._no_session_ticks: int = 0
-        self._SESSION_RETRY_TICKS: int = 30  # retry every ~30 s when session_id is None
+        self._SESSION_RETRY_TICKS: int = _ticks_for(
+            _SESSION_RETRY_SECONDS, self._loop_interval
+        )
 
         # Ticks since last session re-validation (catches server-side session replacement)
         self._active_ticks: int = 0
-        self._SESSION_REVALIDATE_TICKS: int = (
-            300  # re-check every ~5 min when connected
+        self._SESSION_REVALIDATE_TICKS: int = _ticks_for(
+            _SESSION_REVALIDATE_SECONDS, self._loop_interval
         )
 
         # Exponential backoff for state POST network errors.
@@ -171,8 +245,55 @@ class PythonInterface:
         self._post_error_count: int = 0
         self._post_skip_ticks: int = 0
 
-        # Serialise all HTTP work onto one daemon thread
+        # Serialise all HTTP work onto one daemon thread. Previously every
+        # caller spawned its own, including the flight loop, which meant a
+        # thread object allocated on X-Plane's main thread once per tick — and
+        # twice as often once the loop runs at 2 Hz.
         self._lock = threading.Lock()
+        self._work: queue.Queue = queue.Queue(maxsize=_WORK_QUEUE_MAX)
+        self._worker: threading.Thread | None = None
+        self._queue_full_logged = False
+
+    # ── Background HTTP worker ─────────────────────────────────────────────── #
+
+    def _submit(self, fn, *args) -> bool:
+        """
+        Hand work to the HTTP thread. Never blocks: this is called from the
+        flight loop, where blocking would stall a frame.
+
+        Returns False if the backlog is full and the work was dropped. For a
+        state POST that costs nothing — the next tick carries a fresher
+        snapshot, and a stale one is worthless — which is why dropping is
+        preferred over growing the queue or waiting.
+        """
+        try:
+            self._work.put_nowait((fn, args))
+        except queue.Full:
+            if not self._queue_full_logged:
+                self._queue_full_logged = True
+                self._log("WARNING", "HTTP backlog full — dropping work until it drains")
+            return False
+        self._queue_full_logged = False
+        return True
+
+    def _worker_loop(self) -> None:
+        """
+        Run submitted work in order until the sentinel arrives.
+
+        Every task is wrapped: an exception escaping here would end the thread
+        and silently stop all plugin HTTP for the rest of the session, with the
+        checklist simply never updating again and nothing to say why.
+        """
+        while True:
+            item = self._work.get()
+            if item is None:
+                return
+            fn, args = item
+            try:
+                fn(*args)
+            except Exception as exc:  # pylint: disable=broad-except
+                name = getattr(fn, "__name__", repr(fn))
+                self._log("ERROR", f"background task {name} failed: {exc!r}")
 
     # ── Logging helper ─────────────────────────────────────────────────────── #
 
@@ -188,14 +309,46 @@ class PythonInterface:
 
     def XPluginEnable(self):
         self._log("INFO", f"ready — backend: {self._backend_url}")
+        if self._bad_interval:
+            self._log(
+                "WARNING",
+                f"poll_interval {self._bad_interval!r} is not a number — "
+                f"using {self._loop_interval}s",
+            )
+        elif self._configured_interval != self._loop_interval:
+            self._log(
+                "WARNING",
+                f"poll_interval {self._configured_interval}s is outside "
+                f"{_MIN_LOOP_INTERVAL}-{_MAX_LOOP_INTERVAL}s — "
+                f"using {self._loop_interval}s",
+            )
+        self._log("INFO", f"flight loop interval: {self._loop_interval}s")
         # Register the flight loop callback
-        xp.registerFlightLoopCallback(self._flight_loop, _LOOP_INTERVAL, 0)
+        xp.registerFlightLoopCallback(self._flight_loop, self._loop_interval, 0)
+
+        # A fresh queue and thread on every enable: threads cannot be
+        # restarted, and work left over from a previous enable is stale.
+        self._work = queue.Queue(maxsize=_WORK_QUEUE_MAX)
+        self._worker = threading.Thread(
+            target=self._worker_loop, daemon=True, name="xFlow-http"
+        )
+        self._worker.start()
+
         # Kick off session discovery in the background so we don't block enable
-        threading.Thread(target=self._fetch_session, daemon=True).start()
+        self._submit(self._fetch_session)
         return 1
 
     def XPluginDisable(self):
         xp.unregisterFlightLoopCallback(self._flight_loop, 0)
+        worker, self._worker = self._worker, None
+        if worker is not None:
+            try:
+                self._work.put_nowait(None)
+            except queue.Full:
+                # The thread is a daemon and will not outlive X-Plane, so a
+                # full queue here is not worth draining to make room.
+                pass
+            worker.join(timeout=_WORKER_JOIN_TIMEOUT)
 
     def XPluginStop(self):
         self._check_cmd.destroy()
@@ -203,6 +356,31 @@ class PythonInterface:
         self._miss_cmd.destroy()
 
     # ── Flight loop ────────────────────────────────────────────────────────── #
+
+    def _resolve_dref(self, path: str, lookup_name: str):
+        """
+        Return the cached (handle, type) for path, resolving it on first use.
+        Returns None — having logged once, on the miss — if X-Plane does not
+        know the dataref.
+        """
+        entry = self._drefs.get(path)
+        if entry is None:
+            dref = xp.findDataRef(lookup_name)
+            if dref is None:
+                # Retried on the next tick rather than cached: an aircraft that
+                # loads after the plugin registers its datarefs late, and a
+                # negative cache would mean never picking them up. But the
+                # warning is emitted once per path — at 2 Hz an unresolvable
+                # dataref would otherwise fill Log.txt at two lines a second
+                # for the whole flight.
+                if lookup_name not in self._missing_drefs:
+                    self._missing_drefs.add(lookup_name)
+                    self._log("WARNING", f"dataref not found: {lookup_name}")
+                return None
+            self._missing_drefs.discard(lookup_name)
+            entry = (dref, xp.getDataRefTypes(dref))
+            self._drefs[path] = entry
+        return entry
 
     def _flight_loop(
         self, since_last: float, elapsed: float, counter: int, ref
@@ -217,22 +395,22 @@ class PythonInterface:
         with self._lock:
             blocked = self._blocked
         if blocked:
-            return _LOOP_INTERVAL
+            return self._loop_interval
 
         if self._session_id is None:
             self._no_session_ticks += 1
             if self._no_session_ticks >= self._SESSION_RETRY_TICKS:
                 self._no_session_ticks = 0
                 self._log("INFO", "no session — retrying session lookup")
-                threading.Thread(target=self._fetch_session, daemon=True).start()
-            return _LOOP_INTERVAL
+                self._submit(self._fetch_session)
+            return self._loop_interval
 
         self._no_session_ticks = 0
         self._active_ticks += 1
         if self._active_ticks >= self._SESSION_REVALIDATE_TICKS:
             self._active_ticks = 0
             self._log("INFO", "re-validating session with server")
-            threading.Thread(target=self._fetch_session, daemon=True).start()
+            self._submit(self._fetch_session)
 
         state: dict[str, float | str] = {}
         changed = False
@@ -241,15 +419,10 @@ class PythonInterface:
             m = _ARRAY_RE.match(path)
             if m:
                 base, idx = m.group(1), int(m.group(2))
-                dref = self._drefs.get(path)
-                if dref is None:
-                    dref = xp.findDataRef(base)
-                    if dref is None:
-                        self._log("WARNING", f"dataref not found: {base}")
-                        continue
-                    self._drefs[path] = dref
-
-                dtype = xp.getDataRefTypes(dref)
+                entry = self._resolve_dref(path, base)
+                if entry is None:
+                    continue
+                dref, dtype = entry
 
                 if dtype & 16:
                     ibuf = [0] * (idx + 1)
@@ -273,19 +446,15 @@ class PythonInterface:
                     )
                     continue
             else:
-                dref = self._drefs.get(path)
-                if dref is None:
-                    dref = xp.findDataRef(path)
-                    if dref is None:
-                        self._log("WARNING", f"dataref not found: {path}")
-                        continue
-                    self._drefs[path] = dref
+                entry = self._resolve_dref(path, path)
+                if entry is None:
+                    continue
+                dref, dtype = entry
                 # XPLM type bits: Int=1, Float=2, Double=4, FloatArray=8,
                 #                 IntArray=16, Data/string=32.
                 # Priority: Double > Float > Int-only, so that datarefs typed as
                 # both Int+Float (e.g. FMS lat/lon) use getDataf and keep precision.
                 # getDataf returns 0.0 for purely-int datarefs, so Int is last.
-                dtype = xp.getDataRefTypes(dref)
                 if dtype & 32:
                     val = xp.getDatas(dref, 0, 64).rstrip("\x00").strip()
                 elif dtype & 4:
@@ -307,23 +476,23 @@ class PythonInterface:
         with self._lock:
             if self._post_skip_ticks > 0:
                 self._post_skip_ticks -= 1
-                return _LOOP_INTERVAL
+                return self._loop_interval
 
         # Always POST — keeps last_plugin_contact fresh (heartbeat) and
         # bootstraps the watch list on first tick. Dataref data is small enough
         # that 1 POST/s to a local server is negligible.
         self._log("DEBUG", f"POSTing {len(state)} datarefs (changed={changed})")
         snapshot = dict(state)
-        threading.Thread(target=self._post_state, args=(snapshot,), daemon=True).start()
+        self._submit(self._post_state, snapshot)
 
-        return _LOOP_INTERVAL
+        return self._loop_interval
 
     # ── Command handler ────────────────────────────────────────────────────── #
 
     def _on_check_next(self, phase: int):
         if phase != 0:  # 0=BEGIN (key down); ignore CONTINUE and END
             return
-        threading.Thread(target=self._post_check_next, daemon=True).start()
+        self._submit(self._post_check_next)
 
     def _on_dump_watch(self, phase: int):
         if phase != 0:
@@ -344,9 +513,9 @@ class PythonInterface:
         self._log("INFO", f"=== watch dump: {len(watch)} dataref(s) ===")
         for path in watch:
             val = values.get(path, "<not yet read>")
-            dref = drefs.get(path)
-            if dref is not None:
-                dtype = xp.getDataRefTypes(dref)
+            entry = drefs.get(path)
+            if entry is not None:
+                dtype = entry[1]
                 type_label = _TYPE_LABELS.get(dtype, f"type={dtype}")
             else:
                 type_label = "not found"
@@ -357,7 +526,7 @@ class PythonInterface:
     def _on_report_miss(self, phase: int):
         if phase != 0:
             return
-        threading.Thread(target=self._post_report_miss, daemon=True).start()
+        self._submit(self._post_report_miss)
 
     # ── HTTP workers (daemon threads) ──────────────────────────────────────── #
 
@@ -454,6 +623,7 @@ class PythonInterface:
                         "INFO",
                         f"session changed {self._session_id} → {new_id}, resetting watch list",
                     )
+                    self._missing_drefs.clear()
                     self._session_id = new_id
                     self._watch = []
                     self._drefs = {}
@@ -506,7 +676,7 @@ class PythonInterface:
                 self._post_error_count += 1
                 n = self._post_error_count
                 backoff = min(10 * (2 ** (n - 1)), 60)  # 10 → 20 → 40 → 60s cap
-                self._post_skip_ticks = int(backoff)
+                self._post_skip_ticks = _ticks_for(backoff, self._loop_interval)
             self._log(
                 "ERROR", f"{_classify_error(exc)} — retry in {backoff}s (error #{n})"
             )
@@ -530,13 +700,14 @@ class PythonInterface:
                     self._drefs = {
                         p: v for p, v in self._drefs.items() if p in new_watch
                     }
+                    self._missing_drefs.clear()
         elif status == 401:
             self._log("ERROR", "authentication failed — check api_key in config.ini")
         elif status == 404:
             self._log("INFO", "session expired — re-fetching session")
             with self._lock:
                 self._session_id = None
-            threading.Thread(target=self._fetch_session, daemon=True).start()
+            self._submit(self._fetch_session)
         else:
             self._log("INFO", f"unexpected status {status}")
 
