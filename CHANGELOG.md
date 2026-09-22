@@ -1,3 +1,25 @@
+## v2.8.0 (2026-09-22)
+
+### Feat
+
+- **plugin**: default the flight loop to 2 Hz and make the interval configurable
+- **ui**: warn in the browser when the plugin is out of date, and set the window
+
+### Fix
+
+- **plugin-release**: ship config.ini.example so an upgrade cannot clobber settings
+
+### Refactor
+
+- **plugin**: cut over to SHA-256 API keys instead of bridging to them
+
+### Perf
+
+- **plugin**: serialise HTTP onto one worker instead of a thread per call
+- **plugin**: cache each dataref's type with its handle
+- **ui**: halve the browser poll interval to 750 ms
+- **plugin**: store API keys as SHA-256 instead of a password KDF
+
 ## v2.7.2 (2026-09-20)
 
 ### Fix
