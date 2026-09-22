@@ -195,7 +195,7 @@ revised step for the decision.
 | [x] | 2.1 Delete the stale `requirements.txt` | Deleted and gitignored. Verified safe first: the `ship` job regenerates it from `poetry.lock` **before** the rsync, and the rsync does not exclude it, so the server always receives a correct one. |
 | [x] | 2.2 Make password reset work — *code* | `prod.py` reads the `EMAIL_*` settings from `.env`; registration now requires an email address. |
 | [ ] | 2.2b **[server]** Fill in `.env` | **Outstanding — see below.** |
-| [ ] | 2.3 **[verify]** End-to-end reset on production | Blocked on 2.2b. |
+| [x] | 2.3 **[verify]** End-to-end reset on production | Confirmed working. |
 
 ### 2.2 — what shipped
 
@@ -240,7 +240,7 @@ timeout, and a black-holed host would hold a Passenger worker open forever.
 `.env.example` now documents every variable the app reads and which three
 actually matter.
 
-### [ ] 2.3 **[verify]** End-to-end reset on production
+### [x] 2.3 **[verify]** End-to-end reset on production — CONFIRMED
 
 Register a throwaway account, request a reset, confirm the mail arrives (check
 spam — a new sending domain often lands there) and the link works. Delete the
@@ -250,7 +250,7 @@ account afterwards.
 > thing to check in cPanel. Not a blocker, but a reset users never see is the
 > same as no reset.
 
-### 🚦 Gate 2 — blocked on 2.2b and 2.3
+### 🚦 Gate 2 — passed
 
 ---
 
@@ -352,7 +352,7 @@ back on a path the plugin hits every half second.
 `api_views.py:155`) and its query count is already flat and ceiling-tested
 (`test_query_counts.py`), so this costs reads only. One line in `base.py`.
 
-### [ ] 3.3 **[code]** Cache `getDataRefTypes` in the plugin
+### [x] 3.3 **[code]** Cache `getDataRefTypes` in the plugin — DONE
 
 `PI_xFlow.py:250` and `:285` call `xp.getDataRefTypes(dref)` **every tick for
 every dataref**. A dataref's type never changes. Caching it next to the handle
@@ -363,13 +363,13 @@ case **109** (preflight — on the ground, where frames are cheap). In the air i
 is well under half that. Main-thread cost is ~1–2 ms per tick, i.e. one
 slightly-long frame once per second.
 
-### [ ] 3.4 **[code]** Persistent worker thread instead of one per tick
+### [x] 3.4 **[code]** Persistent worker thread instead of one per tick — DONE
 
 `PI_xFlow.py:317` spawns a `threading.Thread` every tick. A single daemon worker
 reading a queue removes the per-tick allocation from the main thread. Small, but
 it is the prerequisite for 3.5 doubling the tick rate.
 
-### [ ] 3.5 **[code + decide]** Flight loop 1 Hz → 2 Hz, configurable
+### [x] 3.5 **[code]** Flight loop 1 Hz → 2 Hz, configurable — DONE
 
 −250 ms average. Do this **after** 3.3 and 3.4, and expose it in `config.ini`
 (`cfg.get("xflow", "poll_interval", fallback=...)`, matching the existing
@@ -611,3 +611,25 @@ first and would catch everything below — so nobody would ever see the warning.
 
 **Dismissal is per page load**, deliberately not persisted: the notice should
 come back next session while the plugin is still out of date.
+
+---
+
+## Plugin packaging fix (alongside 3.5)
+
+The release zip contained `xFlow/config.ini` — the exact path the plugin reads
+— while its own README said to extract into `PythonPlugins/`. Every upgrade
+therefore overwrote the installed config, resetting `api_key`, `backend_url`
+and `poll_interval` to template values, after which the plugin logs
+`api_key not set — edit config.ini` and does nothing.
+
+It now ships `config.ini.example`. A name the plugin does not read cannot
+clobber anything. Verified by building the zip as the workflow does and
+extracting it over an install holding a real key.
+
+The same install steps lived in three places — the workflow's README, the
+`PI_xFlow.py` module docstring, and `docs/RELEASE.md`'s zip layout. All three
+are updated.
+
+> **Affects step 4 of the release run**: the zip no longer supplies
+> `config.ini`, so a first install now needs `cp config.ini.example config.ini`.
+> An existing install just extracts over the top and keeps its settings.
