@@ -9,15 +9,20 @@ Installation:
   2. Create the folder:
        X-Plane 12/Resources/plugins/PythonPlugins/xFlow/
 
-  3. Copy config.ini into that folder:
+  3. Copy config.ini.example to config.ini in that folder:
        X-Plane 12/Resources/plugins/PythonPlugins/xFlow/config.ini
 
+     The release zip ships config.ini.example rather than config.ini, so
+     extracting an upgrade over an existing install cannot overwrite settings
+     that are already there.
+
   Edit config.ini:
-    api_key     — paste your key from the SimFlow profile page
-    backend_url — leave as-is for local dev; change for production
-    log_level   — DEBUG / INFO / WARNING / ERROR (default: INFO)
-                  DEBUG shows watch list contents, dataref values, raw responses
-                  WARNING suppresses INFO but shows missing/broken datarefs
+    api_key       — paste your key from the SimFlow profile page
+    backend_url   — leave as-is for local dev; change for production
+    log_level     — DEBUG / INFO / WARNING / ERROR (default: INFO)
+                    DEBUG shows watch list contents, dataref values, raw responses
+                    WARNING suppresses INFO but shows missing/broken datarefs
+    poll_interval — seconds between dataref reads (default 0.5, range 0.1-4.0)
 
 Commands registered:
   xFlow/check_next_item  — manually check the next checklist item

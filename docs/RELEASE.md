@@ -84,7 +84,8 @@ Pushing `plugin-v*` triggers `.github/workflows/plugin-release.yml`, which:
   ```
   PI_xFlow.py          ← XPPython3 requires this at PythonPlugins/ root
   xFlow/
-    config.ini
+    config.ini.example ← NOT config.ini: extracting an upgrade must not
+                         overwrite the settings already installed
   README.txt
   ```
 - Creates `xflow-plugin.zip`.

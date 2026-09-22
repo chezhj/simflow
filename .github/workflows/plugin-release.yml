@@ -86,17 +86,22 @@ jobs:
           # PI_* file goes at the root of PythonPlugins/
           cp xplane_plugin/xFlow/PI_xFlow.py "$STAGING/PI_xFlow.py"
 
-          # config.ini goes in the xFlow/ subfolder (hardcoded path in the plugin)
-          cp xplane_plugin/xFlow/config.ini  "$STAGING/xFlow/config.ini"
+          # Shipped as .example, NOT as config.ini. The install instruction is
+          # "extract into PythonPlugins/", and a zip entry named
+          # xFlow/config.ini would overwrite the one already there on every
+          # upgrade — silently resetting api_key, backend_url and
+          # poll_interval to template values. A name the plugin does not read
+          # cannot clobber anything.
+          cp xplane_plugin/xFlow/config.ini  "$STAGING/xFlow/config.ini.example"
 
           # README
           cat > "$STAGING/README.txt" << 'EOF'
           xFlow — X-Plane Plugin
           ======================
 
-          Installation
-          ------------
-          1. Extract this zip directly into your PythonPlugins/ folder:
+          First install
+          -------------
+          1. Extract this zip into your PythonPlugins/ folder:
 
                X-Plane 12/Resources/plugins/PythonPlugins/
 
@@ -104,12 +109,24 @@ jobs:
                PythonPlugins/
                  PI_xFlow.py
                  xFlow/
-                   config.ini
+                   config.ini.example
 
-          2. Edit xFlow/config.ini:
-               api_key     — paste your key from the SimFlow profile page
-               backend_url — URL of the SimFlow server (simflow.vdwaal.net)
-               log_level   — DEBUG / INFO / WARNING / ERROR
+          2. Copy xFlow/config.ini.example to xFlow/config.ini and edit it:
+               api_key       — paste your key from the SimFlow profile page
+               backend_url   — URL of the SimFlow server (simflow.vdwaal.net)
+               log_level     — DEBUG / INFO / WARNING / ERROR
+               poll_interval — seconds between dataref reads (default 0.5).
+                               Raise it if xFlow costs you frames; the trade is
+                               a longer wait before a switch change is noticed.
+
+             Without config.ini the plugin still loads, and logs
+             "api_key not set — edit config.ini" instead of making requests.
+
+          Upgrading
+          ---------
+          Extract over the top as above. Your xFlow/config.ini is not in this
+          zip and is left untouched — only config.ini.example is replaced, so
+          compare it against yours to see whether new settings have appeared.
 
           Requirements
           ------------
