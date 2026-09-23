@@ -129,3 +129,48 @@ class TestVersionReachesTheBrowser(TestCase):
         self.assertFalse(data["sim_connected"])
         self.assertEqual(data["plugin_status"], "ok")
         self.assertEqual(data["plugin_version"], "")
+
+
+class TestPluginDownloadUrl(TestCase):
+    """
+    Where an outdated plugin sends the pilot. The failure mode is silent — a
+    404 nobody notices until someone tries to update — so the shape is pinned.
+    """
+
+    def test_it_does_not_use_the_latest_release_shortcut(self):
+        """
+        GitHub's /releases/latest is the newest release across ALL tags, and
+        app releases (v*) share this repository with plugin releases
+        (plugin-v*). A plugin release is normally followed by an app release,
+        which makes "latest" an app release carrying no xflow-plugin.zip.
+
+        Observed: with v2.8.0 as the latest release, the old URL redirected to
+        /releases/download/v2.8.0/xflow-plugin.zip and returned 404.
+        """
+        from django.conf import settings
+
+        self.assertNotIn("/releases/latest/", settings.PLUGIN_DOWNLOAD_URL)
+
+    def test_it_points_at_plugin_releases(self):
+        from django.conf import settings
+
+        self.assertIn("/releases", settings.PLUGIN_DOWNLOAD_URL)
+        self.assertIn("plugin", settings.PLUGIN_DOWNLOAD_URL)
+
+    def test_the_rendered_link_survives_template_escaping(self):
+        """
+        The URL carries a query string, so autoescaping turns & into &amp; in
+        the href. That is correct HTML and browsers resolve it back — this
+        pins that the round trip is lossless.
+        """
+        import html
+
+        from django.conf import settings
+        from django.template import Context, Template
+
+        rendered = Template(
+            "{% load environment_tags %}"
+            "<a href=\"{{ 'PLUGIN_DOWNLOAD_URL'|setting }}\">x</a>"
+        ).render(Context({}))
+        href = rendered.split('"')[1]
+        self.assertEqual(html.unescape(href), settings.PLUGIN_DOWNLOAD_URL)

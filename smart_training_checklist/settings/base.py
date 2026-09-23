@@ -150,11 +150,22 @@ POLL_INTERVAL_MS = 750
 PLUGIN_MIN_VERSION = (1, 0, 2)   # the oldest version ever released; blocks nothing that exists
 PLUGIN_WARN_BELOW  = (1, 1, 0)   # anything older than the current release is nudged
 
-# Stable permalink to the latest plugin zip attached to the GitHub release.
-# The GitHub Actions workflow must upload the asset under this exact filename.
+# Where a pilot is sent to get the plugin.
+#
+# Deliberately the filtered release list, not /releases/latest/download/... .
+# GitHub's "latest" is the newest release across ALL tags, and app releases
+# (v*) are published from the same repository as plugin releases (plugin-v*).
+# A plugin release is normally followed by an app release, which makes "latest"
+# an app release carrying no xflow-plugin.zip — and the download 404s. That was
+# not hypothetical: with v2.8.0 as the latest release, the old URL redirected to
+#   /releases/download/v2.8.0/xflow-plugin.zip  →  404
+#
+# The ?q= filter shows only plugin-v* releases, newest first and expanded, so
+# the zip is one click away without scrolling past app releases. Every consumer
+# treats this as a link for a human — an href, the update banner, and two
+# plugin log lines — so a page rather than a file is fine.
 PLUGIN_DOWNLOAD_URL = (
-    "https://github.com/chezhj/simflow"
-    "/releases/latest/download/xflow-plugin.zip"
+    "https://github.com/chezhj/simflow/releases?q=plugin&expanded=true"
 )
 
 # Auth redirects
