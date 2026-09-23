@@ -362,8 +362,7 @@ class TestHttpWorker(_PluginTestBase):
     def test_a_full_backlog_drops_work_instead_of_blocking(self):
         """
         _submit is called from the flight loop, so it must never block: a stall
-        there is a stalled frame. Dropping a state POST costs nothing, because
-        the next tick carries a fresher snapshot.
+        there is a stalled frame.
         """
         plugin = self._make_plugin()
         for _ in range(self.module._WORK_QUEUE_MAX):
@@ -374,28 +373,169 @@ class TestHttpWorker(_PluginTestBase):
             self.assertFalse(plugin._submit(lambda: None))
 
         warnings = [c for c in log.call_args_list if c.args and c.args[0] == "WARNING"]
-        self.assertEqual(len(warnings), 1, "backlog warning should not repeat per tick")
+        self.assertEqual(len(warnings), 1)
 
-    def test_the_backlog_warning_returns_after_it_drains(self):
+    def test_the_backlog_warning_is_rate_limited_by_time(self):
+        """
+        The first version reset a flag on any successful put, so a queue
+        oscillating between full and not-full — exactly what a server slower
+        than the tick rate produces — logged at the tick rate. Observed in
+        flight as an unbroken column of identical warnings.
+        """
         plugin = self._make_plugin()
-        for _ in range(self.module._WORK_QUEUE_MAX):
-            plugin._submit(lambda: None)
-        plugin._submit(lambda: None)           # full → warns
-        plugin._work.get_nowait()              # drains one slot
-        self.assertTrue(plugin._submit(lambda: None))
 
-        for _ in range(self.module._WORK_QUEUE_MAX):
+        def fill():
+            while plugin._submit(lambda: None):
+                pass
+
+        with patch.object(plugin, "_log") as log:
+            for _ in range(20):
+                fill()                          # full → drop
+                plugin._work.get_nowait()       # worker frees one slot
+                plugin._submit(lambda: None)    # succeeds; must NOT re-arm
+
+        warnings = [c for c in log.call_args_list if c.args and c.args[0] == "WARNING"]
+        self.assertEqual(
+            len(warnings), 1,
+            f"warning repeated {len(warnings)} times while oscillating",
+        )
+
+    def test_the_backlog_warning_returns_after_the_interval(self):
+        plugin = self._make_plugin()
+        while plugin._submit(lambda: None):
+            pass
+        # The fill loop above already hit the full queue once and armed the
+        # limiter, so clear it before measuring.
+        plugin._last_full_log = 0.0
+
+        with patch.object(plugin, "_log") as log:
+            plugin._submit(lambda: None)
+            plugin._last_full_log -= self.module._FULL_LOG_INTERVAL + 1
+            plugin._submit(lambda: None)
+        warnings = [c for c in log.call_args_list if c.args and c.args[0] == "WARNING"]
+        self.assertEqual(len(warnings), 2)
+
+
+class TestStateCoalescing(_PluginTestBase):
+    """
+    State posts replace each other rather than queueing. Queued FIFO, a server
+    slower than the tick rate left the plugin posting snapshots seconds out of
+    date — worse than skipping them, because the server acts on what it is
+    sent. The old thread-per-tick code did not have this failure mode: requests
+    overlapped instead of queueing, so serialising them introduced it.
+    """
+
+    def test_only_one_state_job_is_ever_queued(self):
+        plugin = self._make_plugin()
+        for i in range(20):
+            plugin._submit_state({"tick": i})
+        self.assertEqual(plugin._work.qsize(), 1)
+
+    def test_the_newest_snapshot_is_the_one_sent(self):
+        plugin = self._make_plugin()
+        for i in range(20):
+            plugin._submit_state({"tick": i})
+
+        sent = []
+        with patch.object(plugin, "_post_state", side_effect=sent.append):
+            fn, args = plugin._work.get_nowait()
+            fn(*args)
+
+        self.assertEqual(sent, [{"tick": 19}], "sent a stale snapshot")
+
+    def test_a_new_snapshot_queues_again_once_the_last_one_ran(self):
+        plugin = self._make_plugin()
+        plugin._submit_state({"tick": 1})
+        with patch.object(plugin, "_post_state"):
+            fn, args = plugin._work.get_nowait()
+            fn(*args)
+
+        plugin._submit_state({"tick": 2})
+        self.assertEqual(plugin._work.qsize(), 1)
+
+    def test_state_posts_cannot_fill_the_queue(self):
+        """
+        The symptom that started this: at 2 Hz against a slow server the queue
+        filled and the flight loop logged a dropped backlog every tick.
+        """
+        plugin = self._make_plugin()
+        with patch.object(plugin, "_log") as log:
+            for i in range(500):
+                plugin._submit_state({"tick": i})
+        self.assertEqual(plugin._work.qsize(), 1)
+        self.assertEqual(
+            [c for c in log.call_args_list if c.args and c.args[0] == "WARNING"], []
+        )
+
+    def test_the_flight_loop_does_not_build_a_backlog_when_nothing_drains(self):
+        """
+        The failure as observed in flight: at 2 Hz against a server slower than
+        the tick rate, the queue filled and every tick logged a dropped
+        backlog. Reproduced here by ticking without draining. This pins the
+        flight loop's call site, which the tests calling _submit_state
+        directly do not.
+        """
+        xp = self.xp_stub
+        xp.findDataRef.return_value = object()
+        xp.getDataRefTypes.return_value = 2
+
+        plugin = self._make_plugin()
+        plugin._session_id = 1
+        plugin._api_key = "k"
+        plugin._watch = ["sim/a"]
+
+        with patch.object(plugin, "_log") as log:
+            for i in range(50):
+                plugin._flight_loop(1.0, 1.0, i, None)
+
+        self.assertEqual(plugin._work.qsize(), 1, "flight loop queued a backlog")
+        self.assertEqual(
+            [c for c in log.call_args_list if c.args and c.args[0] == "WARNING"], [],
+            "flight loop reported a full backlog",
+        )
+
+    def test_a_failed_submit_does_not_wedge_state_posting(self):
+        """
+        If the queue is full of commands when a state post is offered, the
+        coalescing flag must be released — otherwise _state_queued stays True
+        for a job that was never queued, and no state is ever posted again.
+        """
+        plugin = self._make_plugin()
+        while plugin._submit(lambda: None):
+            pass
+
+        plugin._submit_state({"tick": 1})
+        self.assertFalse(plugin._state_queued, "flag left set for a job never queued")
+
+        while True:
             try:
                 plugin._work.get_nowait()
             except queue.Empty:
                 break
-        for _ in range(self.module._WORK_QUEUE_MAX):
-            plugin._submit(lambda: None)
+        plugin._submit_state({"tick": 2})
+        self.assertEqual(plugin._work.qsize(), 1)
 
-        with patch.object(plugin, "_log") as log:
-            plugin._submit(lambda: None)
-        warnings = [c for c in log.call_args_list if c.args and c.args[0] == "WARNING"]
-        self.assertEqual(len(warnings), 1, "a new backlog episode should warn again")
+    def test_enable_clears_a_flag_left_by_disable(self):
+        """
+        XPluginEnable builds a fresh queue. A _state_queued left True would
+        point at a job in the discarded one, and every subsequent state post
+        would be skipped as already-queued.
+        """
+        plugin = self._make_plugin()
+        plugin._submit_state({"tick": 1})
+        self.assertTrue(plugin._state_queued)
+
+        with patch.object(plugin, "_fetch_session"):
+            plugin.XPluginEnable()
+            self.assertFalse(plugin._state_queued)
+            self.assertIsNone(plugin._pending_state)
+            plugin.XPluginDisable()
+
+        plugin._submit_state({"tick": 2})
+        self.assertEqual(plugin._work.qsize(), 1)
+
+
+class TestHttpWorkerLifecycle(_PluginTestBase):
 
     def test_enable_starts_a_worker_and_disable_stops_it(self):
         plugin = self._make_plugin()

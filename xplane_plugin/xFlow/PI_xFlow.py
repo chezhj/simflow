@@ -38,6 +38,7 @@ import json
 import queue
 import re
 import threading
+import time
 import urllib.error
 import urllib.request
 from pathlib import Path
@@ -106,6 +107,10 @@ _WORK_QUEUE_MAX = 8
 # Slightly over the HTTP timeout, so a disable during an in-flight request
 # waits for it rather than abandoning it.
 _WORKER_JOIN_TIMEOUT = 6.0
+# Seconds between repeats of the backlog warning. Rate-limited by time rather
+# than by a flag: a queue oscillating between full and not-full resets a flag
+# on every successful put, which logged at the tick rate instead of once.
+_FULL_LOG_INTERVAL = 60.0
 
 # ── Log levels ─────────────────────────────────────────────────────────────── #
 
@@ -252,7 +257,15 @@ class PythonInterface:
         self._lock = threading.Lock()
         self._work: queue.Queue = queue.Queue(maxsize=_WORK_QUEUE_MAX)
         self._worker: threading.Thread | None = None
-        self._queue_full_logged = False
+        self._last_full_log = 0.0
+
+        # State posts do not queue. The newest snapshot replaces whatever was
+        # waiting, and at most one state job sits in _work at a time. Queuing
+        # them FIFO meant a server slower than the tick rate put the plugin
+        # permanently behind, POSTing snapshots seconds out of date — worse
+        # than not posting at all, since the server acts on what it is sent.
+        self._pending_state: dict | None = None
+        self._state_queued = False
 
     # ── Background HTTP worker ─────────────────────────────────────────────── #
 
@@ -261,20 +274,54 @@ class PythonInterface:
         Hand work to the HTTP thread. Never blocks: this is called from the
         flight loop, where blocking would stall a frame.
 
-        Returns False if the backlog is full and the work was dropped. For a
-        state POST that costs nothing — the next tick carries a fresher
-        snapshot, and a stale one is worthless — which is why dropping is
-        preferred over growing the queue or waiting.
+        Returns False if the backlog is full and the work was dropped.
+
+        State posts do not come through here directly — see _submit_state,
+        which coalesces them so a slow server cannot build a backlog of stale
+        snapshots.
         """
         try:
             self._work.put_nowait((fn, args))
         except queue.Full:
-            if not self._queue_full_logged:
-                self._queue_full_logged = True
-                self._log("WARNING", "HTTP backlog full — dropping work until it drains")
+            now = time.monotonic()
+            if now - self._last_full_log >= _FULL_LOG_INTERVAL:
+                self._last_full_log = now
+                self._log(
+                    "WARNING",
+                    "HTTP backlog full — dropping work until it drains "
+                    f"(further reports suppressed for {int(_FULL_LOG_INTERVAL)}s)",
+                )
             return False
-        self._queue_full_logged = False
         return True
+
+    def _submit_state(self, snapshot: dict) -> None:
+        """
+        Offer the latest dataref snapshot to the HTTP thread.
+
+        Replaces any snapshot not yet sent rather than queueing behind it, and
+        keeps at most one state job in the queue. If the server is slower than
+        the tick rate the effect is that intermediate samples are skipped and
+        the one actually sent is always the newest — where a FIFO queue would
+        have sent every sample, each progressively more out of date.
+        """
+        with self._lock:
+            self._pending_state = snapshot
+            if self._state_queued:
+                return          # a job is already queued or running; it will
+                                # pick up this snapshot instead of the old one
+            self._state_queued = True
+
+        if not self._submit(self._run_pending_state):
+            with self._lock:
+                self._state_queued = False
+
+    def _run_pending_state(self) -> None:
+        """Post whatever the newest snapshot is at the moment this runs."""
+        with self._lock:
+            snapshot, self._pending_state = self._pending_state, None
+            self._state_queued = False
+        if snapshot is not None:
+            self._post_state(snapshot)
 
     def _worker_loop(self) -> None:
         """
@@ -327,8 +374,14 @@ class PythonInterface:
         xp.registerFlightLoopCallback(self._flight_loop, self._loop_interval, 0)
 
         # A fresh queue and thread on every enable: threads cannot be
-        # restarted, and work left over from a previous enable is stale.
+        # restarted, and work left over from a previous enable is stale. The
+        # coalescing flags go with it — a _state_queued left True by a disable
+        # would refer to a job in the discarded queue, and every state post
+        # after re-enable would be skipped as already-queued.
         self._work = queue.Queue(maxsize=_WORK_QUEUE_MAX)
+        with self._lock:
+            self._pending_state = None
+            self._state_queued = False
         self._worker = threading.Thread(
             target=self._worker_loop, daemon=True, name="xFlow-http"
         )
@@ -483,7 +536,7 @@ class PythonInterface:
         # that 1 POST/s to a local server is negligible.
         self._log("DEBUG", f"POSTing {len(state)} datarefs (changed={changed})")
         snapshot = dict(state)
-        self._submit(self._post_state, snapshot)
+        self._submit_state(snapshot)
 
         return self._loop_interval
 
@@ -669,6 +722,7 @@ class PythonInterface:
         body = {"session_id": session_id, "datarefs": state}
 
         self._log("DEBUG", f"POST {url}")
+        started = time.monotonic()
         try:
             status, data = self._http_post_json(url, headers, body)
         except Exception as exc:
@@ -682,7 +736,14 @@ class PythonInterface:
             )
             return
 
-        self._log("DEBUG", f"state response status {status}")
+        # The round trip, so a backlog can be diagnosed from the log instead
+        # of inferred. At 2 Hz anything approaching 500 ms means the worker
+        # cannot keep up and snapshots are being coalesced away.
+        self._log(
+            "DEBUG",
+            f"state response status {status} in "
+            f"{(time.monotonic() - started) * 1000:.0f} ms",
+        )
 
         if status == 200:
             newly_checked = data.get("checked", [])
