@@ -53,6 +53,42 @@ DEFAULT_URL = "https://simflow.vdwaal.net"
 DEFAULT_PLUGIN_VERSION = "1.1.2"
 
 
+def _get_json(url, headers, body=None):
+    """One request, returning parsed JSON or None. Used for discovery, not timing."""
+    data = json.dumps(body).encode() if body is not None else None
+    req = urllib.request.Request(
+        url, data=data, headers=headers, method="POST" if body is not None else "GET"
+    )
+    try:
+        with urllib.request.urlopen(req, timeout=15) as resp:
+            return json.loads(resp.read() or b"{}")
+    except Exception:
+        return None
+
+
+def _discover_session(base, headers):
+    """The session endpoint already returns the id, so do not make the user find it."""
+    data = _get_json(f"{base}/api/plugin/session/", headers)
+    return (data or {}).get("session_id")
+
+
+def _discover_watch(base, headers, session_id):
+    """
+    Ask the server which datarefs it wants, so the timed requests carry a
+    realistic payload. An empty datarefs object makes every rule fail on the
+    first comparison, which would flatter the endpoint.
+
+    Returns None if the discovery request itself failed — distinct from a
+    successful response that carries an empty watch list, which is a real
+    answer (nothing left to watch in this phase).
+    """
+    data = _get_json(f"{base}/api/plugin/state/", headers,
+                     {"session_id": session_id, "datarefs": {}})
+    if data is None:
+        return None
+    return data.get("watch", [])
+
+
 def _summarise(name, samples, codes=None, note=""):
     if not samples:
         print(f"  {name:<34} no successful samples  {note}")
@@ -120,6 +156,37 @@ def _time_requests(url, headers, body, n, session=None):
     return samples, failures
 
 
+def _probe_state(base, headers, args):
+    """
+    Time /api/plugin/state/ with a payload the server actually asked for.
+
+    Split out of main() so an aborted discovery skips only this measurement;
+    the connection-reuse numbers below it are still worth having.
+    """
+    session_id = args.session_id or _discover_session(base, headers)
+    if not session_id:
+        print("  could not determine a session id — start a checklist in the "
+              "web UI, or pass --session-id")
+        return
+
+    # First POST with no datarefs, purely to learn the watch list the server
+    # wants. Timing this would understate the endpoint: with nothing to
+    # evaluate against, every rule fails on its first comparison.
+    watch = _discover_watch(base, headers, session_id)
+    if watch is None:
+        print("  the discovery POST to /api/plugin/state/ failed — timing it "
+              "now would measure an error path, not the rule engine. Check "
+              "the session is active and retry.")
+        return
+
+    payload = {path: 0.0 for path in watch}
+    print(f"  (session {session_id}, {len(payload)} datarefs in the watch list)")
+    body = {"session_id": session_id, "datarefs": payload}
+    s, c, f = _time_urllib(f"{base}/api/plugin/state/", headers, body, args.n)
+    _summarise("POST /api/plugin/state/ (write+rules)", s, c,
+               f"{f} failed" if f else "")
+
+
 def main():
     ap = argparse.ArgumentParser(description=__doc__.splitlines()[1])
     ap.add_argument("--url", default=DEFAULT_URL)
@@ -129,9 +196,11 @@ def main():
                     help="sent as X-Plugin-Version; keep it at or above "
                          "PLUGIN_WARN_BELOW or the web UI will show an update banner")
     ap.add_argument("--state", action="store_true",
-                    help="also probe /api/plugin/state/ — has side effects, see module docstring")
+                    help="also probe /api/plugin/state/ — HAS SIDE EFFECTS: it sends "
+                         "the real watch list and can auto-check items. Reset the "
+                         "procedure afterwards.")
     ap.add_argument("--session-id", type=int, default=0,
-                    help="required with --state; the FlightSession to post against")
+                    help="optional; discovered from /api/plugin/session/ if omitted")
     args = ap.parse_args()
 
     base = args.url.rstrip("/")
@@ -156,13 +225,7 @@ def main():
         _summarise("GET /api/plugin/session/  (1 write)", s, c, f"{f} failed" if f else "")
 
         if args.state:
-            if not args.session_id:
-                print("  --state needs --session-id")
-            else:
-                body = {"session_id": args.session_id, "datarefs": {}}
-                s, c, f = _time_urllib(f"{base}/api/plugin/state/", auth, body, args.n)
-                _summarise("POST /api/plugin/state/ (1 write+rules)", s, c,
-                           f"{f} failed" if f else "")
+            _probe_state(base, auth, args)
     else:
         print("  (no --key / XFLOW_API_KEY, skipping the authenticated endpoints)")
 
@@ -184,8 +247,10 @@ def main():
                 _summarise("GET /  reused connection", s)
 
     print()
-    print("Read the gap between '/' and the authenticated endpoints: that is what")
-    print("the database write costs, with network and TLS already subtracted.")
+    print("Measured on 2026-09-24 from the dev machine: '/' 59-64 ms median,")
+    print("/api/plugin/session/ 64-76 ms. The write costs 5-10 ms, so it is not")
+    print("the 593 ms floor. What remains untimed there is /state/'s own work:")
+    print("run with --state and compare against those two numbers.")
 
 
 if __name__ == "__main__":
