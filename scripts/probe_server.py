@@ -53,21 +53,37 @@ DEFAULT_URL = "https://simflow.vdwaal.net"
 DEFAULT_PLUGIN_VERSION = "1.1.2"
 
 
-def _summarise(name, samples, note=""):
+def _summarise(name, samples, codes=None, note=""):
     if not samples:
-        print(f"  {name:<34} no successful samples")
+        print(f"  {name:<34} no successful samples  {note}")
         return
     ordered = sorted(samples)
     p90 = ordered[max(0, int(len(ordered) * 0.9) - 1)]
+    tail = f"  [{', '.join(f'{c}x{n}' for c, n in sorted((codes or {}).items()))}]" if codes else ""
     print(
         f"  {name:<34} min {min(ordered):7.1f}  median {statistics.median(ordered):7.1f}"
-        f"  p90 {p90:7.1f}  max {max(ordered):7.1f} ms  {note}"
+        f"  p90 {p90:7.1f}  max {max(ordered):7.1f} ms{tail}  {note}"
     )
+    # A 404 returns BEFORE the write in both authenticated views
+    # (plugin_views.py: the 404 is four lines above the UPDATE), so timing one
+    # measures auth and a failed lookup and nothing else. This is exactly how
+    # an earlier baseline came back at 0.31 s and misled us for days.
+    if codes and codes.get(404):
+        print("       ^^ 404: no ACTIVE FlightSession, so the request returned "
+              "before the write.\n"
+              "          Start a checklist in the web UI, then run this again — "
+              "otherwise this number means nothing.")
 
 
 def _time_urllib(url, headers, body, n):
-    """Fresh connection per request, the way the plugin's fallback path works."""
-    samples, failures = [], 0
+    """
+    Fresh connection per request, the way the plugin's fallback path works.
+
+    Returns (samples, status_code_counts, transport_failures). The status codes
+    matter as much as the timings: a 404 is timed like any other response but
+    returns before the database write, so it measures nothing we care about.
+    """
+    samples, codes, failures = [], {}, 0
     for _ in range(n):
         data = json.dumps(body).encode() if body is not None else None
         req = urllib.request.Request(
@@ -77,15 +93,15 @@ def _time_urllib(url, headers, body, n):
         try:
             with urllib.request.urlopen(req, timeout=15) as resp:
                 resp.read()
+                code = resp.status
             samples.append((time.perf_counter() - started) * 1000)
+            codes[code] = codes.get(code, 0) + 1
         except urllib.error.HTTPError as exc:
-            # A 4xx still exercised the whole path up to the response.
             samples.append((time.perf_counter() - started) * 1000)
-            if exc.code not in (200, 404):
-                failures += 1
+            codes[exc.code] = codes.get(exc.code, 0) + 1
         except Exception:
             failures += 1
-    return samples, failures
+    return samples, codes, failures
 
 
 def _time_requests(url, headers, body, n, session=None):
@@ -132,20 +148,20 @@ def main():
     print()
 
     print("fresh connection each time (what the plugin does today)")
-    s, f = _time_urllib(f"{base}/", {}, None, args.n)
-    _summarise("GET /  (read-only, no auth)", s, f"{f} failed" if f else "")
+    s, c, f = _time_urllib(f"{base}/", {}, None, args.n)
+    _summarise("GET /  (read-only, no auth)", s, c, f"{f} failed" if f else "")
 
     if args.key:
-        s, f = _time_urllib(f"{base}/api/plugin/session/", auth, None, args.n)
-        _summarise("GET /api/plugin/session/  (1 write)", s, f"{f} failed" if f else "")
+        s, c, f = _time_urllib(f"{base}/api/plugin/session/", auth, None, args.n)
+        _summarise("GET /api/plugin/session/  (1 write)", s, c, f"{f} failed" if f else "")
 
         if args.state:
             if not args.session_id:
                 print("  --state needs --session-id")
             else:
                 body = {"session_id": args.session_id, "datarefs": {}}
-                s, f = _time_urllib(f"{base}/api/plugin/state/", auth, body, args.n)
-                _summarise("POST /api/plugin/state/ (1 write+rules)", s,
+                s, c, f = _time_urllib(f"{base}/api/plugin/state/", auth, body, args.n)
+                _summarise("POST /api/plugin/state/ (1 write+rules)", s, c,
                            f"{f} failed" if f else "")
     else:
         print("  (no --key / XFLOW_API_KEY, skipping the authenticated endpoints)")
