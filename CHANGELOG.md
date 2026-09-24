@@ -1,3 +1,10 @@
+## v2.8.1 (2026-09-23)
+
+### Fix
+
+- **plugin**: send pilots to the plugin releases, not GitHub's "latest"
+- **plugin**: coalesce state posts and rate-limit the backlog warning by time
+
 ## v2.8.0 (2026-09-22)
 
 ### Feat

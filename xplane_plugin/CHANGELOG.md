@@ -1,5 +1,15 @@
 # xFlow Plugin Changelog
 
+## [1.1.2] — 2026-09-23
+
+### Changed
+- Merged
+
+## [1.1.1] — 2026-09-23
+
+### Changed
+- Fixed bug in threading & logging
+
 ## [1.1.0] — 2026-09-22
 
 ### Changed
