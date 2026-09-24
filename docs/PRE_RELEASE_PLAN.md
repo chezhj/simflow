@@ -438,11 +438,38 @@ Latency measurably improved, all tests green, plugin still behaves in the sim.
 **If 0.1 said NFS, this phase is replaced by a MySQL migration** and everything
 below is void. Otherwise:
 
-### [ ] 4.1 **[code]** SQLite WAL, IMMEDIATE transactions, busy timeout
+> **Measured 2026-09-24 — the latency case for this phase is dead.**
+> `scripts/probe_server.py`, run four times from the dev machine against
+> production with an active session and the server's own 63-dataref watch list:
+>
+> | endpoint | work done | median |
+> |---|---|---|
+> | `GET /` | read-only, no auth | 62–70 ms |
+> | `GET /api/plugin/session/` | 3 queries, 1 write | 68–79 ms |
+> | `POST /api/plugin/state/` | 15 queries, 1 write, rule evaluation | **93–100 ms** |
+>
+> All samples returned 200. The write costs 5–10 ms and the whole endpoint
+> costs ~30 ms above a static page, so **the 593 ms floor in the flight log is
+> not the database and not the server**. fsync-per-commit was the hypothesis
+> WAL was meant to fix; it is disproved. Connection setup, by contrast, is
+> real: a fresh connection costs 39–58 ms against 19–27 ms for a reused one,
+> and the plugin opens a fresh one every call.
+>
+> The remaining ~500 ms is on the sim side. `xFlow/net_probe` (plugin ≥ next
+> release) decomposes it from inside X-Plane's process — see 4.3.
+
+### [ ] 4.1 **[code]** SQLite IMMEDIATE transactions, busy timeout — WAL optional
 
 ~~Blocked until 0.2 confirms the backup is WAL-safe.~~ **Unblocked**: the
 backup and restore are WAL-safe since www_installer v1.3.0. Make sure the server's
 `~/deploy-tools` is on v1.3.0 or later before the release that turns WAL on.
+
+**Re-scoped after the measurement above.** `transaction_mode` and `timeout`
+still earn their place: they are about multiple Passenger workers colliding on
+writes, which the probe did not test and which shows up as "database is locked"
+rather than as latency. WAL is now a nice-to-have for reader/writer
+concurrency, not a fix for a problem we have observed — decide it on its own
+merits, not on the 593 ms.
 
 ```python
 "OPTIONS": {
@@ -455,8 +482,8 @@ backup and restore are WAL-safe since www_installer v1.3.0. Make sure the server
 Django 5.1+ supports `init_command` and `transaction_mode` natively, and you are
 on 5.2.1. `IMMEDIATE` is the one that matters most under Passenger: multiple
 worker processes on deferred transactions is the classic route to "database is
-locked" even at low load. WAL also stops readers blocking writers, which is what
-lets 3.2's doubled poll rate stay free.
+locked" even at low load. WAL also stops readers blocking writers — worth having
+at 50 users, but no longer the load-bearing reason for this phase.
 
 ### [ ] 4.2 **[verify]** Confirm WAL is live and the backup round-trips
 
@@ -477,6 +504,26 @@ sqlite3 "$b" 'SELECT max(id) FROM checklist_flightsession;'  # compare with the 
 The restore path does not need testing against the live app. www_installer's
 `tests/sqlite_backup_test.sh` covers it: a stale `-wal`, a refused safety copy, and
 `--force-restore`.
+
+### [ ] 4.3 **[verify]** Find the sim-side 500 ms with `xFlow/net_probe`
+
+Bind `xFlow/net_probe` to a key in X-Plane (Settings → Keyboard), run it on the
+sim PC with the sim loaded, and read the block it writes to `XPPython3Log.txt`.
+It runs on the HTTP worker thread, so it costs no frames; it times DNS, TCP,
+TLS, `GET /`, `GET /api/plugin/session/` and a reused connection, all from
+inside X-Plane's own interpreter.
+
+Compare against the dev-machine figures in the box above. What each outcome means:
+
+| net_probe shows | conclusion |
+|---|---|
+| DNS in the hundreds of ms | name resolution per call — cache the address, or pool the connection |
+| TCP+TLS in the hundreds of ms | connection setup on that network path — switch to a pooled `requests.Session` |
+| all stages fast, `GET /` still slow | the cost is inside X-Plane's process, not the network |
+| everything fast (~60–100 ms) | the 593 ms was transient, or specific to the state payload |
+
+A pooled `requests.Session` is the likely fix in two of those four rows, and the
+probe already shows it is worth 20–30 ms per call on its own.
 
 ### 🚦 Gate 4
 
