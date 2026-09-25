@@ -505,7 +505,54 @@ The restore path does not need testing against the live app. www_installer's
 `tests/sqlite_backup_test.sh` covers it: a stale `-wal`, a refused safety copy, and
 `--force-restore`.
 
-### [ ] 4.3 **[verify]** Find the sim-side 500 ms with `xFlow/net_probe`
+### [x] 4.3 **[done]** Sim-side 500 ms found: a new TLS context per request
+
+`xFlow/net_probe`, run twice on the sim PC against production:
+
+| stage | median | note |
+|---|---|---|
+| DNS resolve | 15 ms | |
+| TCP connect | 32 ms | RTT ~3x the dev machine's |
+| TCP + TLS handshake (raw socket, shared context) | 94 ms | so TLS itself ≈ 62 ms |
+| `GET /` fresh connection via `requests` | **579 ms** | |
+| `GET /` reused connection | **110 ms** | |
+
+The arithmetic is the finding. `requests` spent 579 − 110 = **469 ms** setting up
+a connection that raw sockets set up in **94 ms**. The 375 ms difference moves no
+packets: the raw-socket stage built its `SSLContext` once, outside the timing,
+while `requests.get()` at module level builds a new `Session`, pool and
+`SSLContext` for every call — and creating that context loads the platform
+certificate store. On Windows that is not cheap, and the plugin was paying it
+twice a second.
+
+**Fix**: one pooled `requests.Session`, built on first use and closed on
+disable (`_http_session`). Verified against a real socket, not mocks: 10 GETs
+and 10 POSTs now share **one** TCP connection where the old path opened ten,
+and a connection dropped by the server is recovered rather than raising.
+Expected effect on the sim PC, from its own numbers: **~579 ms → ~110 ms.**
+
+The adapter carries one `connect` retry. The plugin polls every 500 ms so the
+connection is rarely idle long enough to go stale, but it does idle out during
+an error backoff — and without the retry the first call afterwards fails and
+starts a 10 s backoff of its own.
+
+Two things deliberately *not* concluded from this: WAL is still not indicated
+(4.1 above), and the remaining gap between the sim PC's 110 ms and the dev
+machine's 20 ms is mostly the 3x RTT, not server work.
+
+### [ ] 4.4 **[verify]** Re-run `net_probe` on the sim PC after the pooling fix
+
+The probe now reports `GET / unpooled (old path)` and `GET / pooled (current)`
+side by side, so the before/after is visible on the machine that has the
+problem. Expect the pooled line near the old reused-connection figure (~110 ms)
+and the unpooled line near the old fresh figure (~579 ms). Then fly and check
+`state response status 200 in N ms` in `XPPython3Log.txt` — that is the number
+that was 593 ms.
+
+<details>
+<summary>Original 4.3 plan, before the probe answered it</summary>
+
+### Find the sim-side 500 ms with `xFlow/net_probe`
 
 Bind `xFlow/net_probe` to a key in X-Plane (Settings → Keyboard), run it on the
 sim PC with the sim loaded, and read the block it writes to `XPPython3Log.txt`.
@@ -524,6 +571,8 @@ Compare against the dev-machine figures in the box above. What each outcome mean
 
 A pooled `requests.Session` is the likely fix in two of those four rows, and the
 probe already shows it is worth 20–30 ms per call on its own.
+
+</details>
 
 ### 🚦 Gate 4
 
