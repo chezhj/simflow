@@ -617,27 +617,203 @@ probe already shows it is worth 20–30 ms per call on its own.
 
 None of these are launch blockers, but all of them bite within the first weeks.
 
-### [ ] 5.1 **[code + server]** Session table cleanup
-No `clearsessions` anywhere, and sessions are database-backed, so every
-anonymous visitor leaves a row that never expires out of the table. Add a cron
-entry (daily `manage.py clearsessions`).
+> **Three corrections to the original outline, from reading the code.** They
+> change what 5.2 is actually about.
+>
+> 1. **The log files are not in the database backup.** `_LOG_DIR` is
+>    `BASE_DIR / "logs"` (`plugin_views.py:43`, `settings/prod.py:74`), and
+>    `BASE_DIR` is the *release* directory. `SHARED_PATHS=()` in
+>    `deploy/simflow_config.sh`, so `logs/` is not symlinked out of the
+>    release. Nothing under `logs/` reaches `db.sqlite3` or the backup taken
+>    before each `migrate`.
+> 2. **`logs/django.log` is therefore discarded on every deploy** — the error
+>    log added in Phase 1, gone at each release. Not what was intended, and it
+>    is a separate defect from retention. New item 5.5.
+> 3. **The session `.jsonl` files are bounded by the release, not unbounded
+>    forever.** They still grow without limit *within* a long-lived release,
+>    which is the case between releases, so retention is still worth having —
+>    but the urgency is lower than the outline implied, and the fix is
+>    different once 5.5 moves them somewhere persistent.
 
-### [ ] 5.2 **[code]** Retention for `FlightSession` and session logs
-`FlightSession` rows are marked inactive but never deleted, each carrying a
-`last_datarefs` JSON blob. `logs/session_<id>.jsonl` is one file per session,
-forever. Both land in the SQLite file that gets backed up on every deploy.
-Proposal: a management command deleting inactive sessions and their log files
-after N days, wired into the same cron.
+---
+
+### [ ] 5.1 **[code + server]** Session table cleanup
+
+**Confirmed**: no `SESSION_ENGINE` is set anywhere in `settings/`, so Django's
+default `django.contrib.sessions.backends.db` is in use and every session is a
+row in `django_session`. The app writes to the session on the profile page
+(`attrib`, `dual_mode`, `pilot_role`, the `sb_*` SimBrief fields), so an
+anonymous visitor who touches the profile page leaves a row. Expiry is logical
+only: the row survives its own `expire_date` until something deletes it, and
+`clearsessions` is called nowhere in the repo.
+
+**Change**: run `manage.py clearsessions` daily. Two ways, and they are not
+equivalent:
+
+| | runs | verdict |
+|---|---|---|
+| cPanel cron entry, daily | every day | **preferred** — bounded growth regardless of release cadence |
+| append to `POST_MIGRATE_COMMANDS` | only on deploy | weaker, but zero new infrastructure |
+
+The cron command needs the virtualenv and the settings module, both already
+named in `deploy/simflow_config.sh`:
+
+```bash
+source /home/vdwanet/virtualenv/domains/simflow.vdwaal.net/3.11/bin/activate && \
+  cd ~/domains/simflow.vdwaal.net && \
+  DJANGO_SETTINGS_MODULE=smart_training_checklist.settings.prod \
+  python manage.py clearsessions
+```
+
+**[decide]** cron or deploy-hook. I would do both: the cron for the steady
+state, the deploy hook so a fresh release starts clean.
+
+**Verify**: `SELECT count(*) FROM django_session;` before and after.
+
+---
+
+### [ ] 5.2 **[code]** Retention for `FlightSession` and its children
+
+This one is real and it is in the database. `FlightSession` rows are flagged
+`is_active=False` and never deleted, and three tables cascade off them
+(`models.py`): `FlightSessionAttribute`, `FlightItemState` and
+`RuleMissReport`. Each `FlightSession` also carries a `last_datarefs` JSON blob
+— the full dataref snapshot, ~27–63 keys — which is the largest per-row cost.
+All of it is inside `db.sqlite3`, so it inflates every pre-migrate backup.
+
+**Change**: a `checklist_prune` management command (alongside the existing
+`checklist_content`), deleting inactive `FlightSession`s older than N days.
+The cascade handles the children. Give it the same shape as
+`checklist_content`, which the team already knows:
+
+- `--days N` (default 90)
+- `--dry-run` reporting the count per table without writing
+- `--noinput` for the cron
+
+**[decide]** the retention window, and whether to keep the row but null out
+`last_datarefs` instead of deleting — that keeps flight history for a future
+"your past flights" feature while dropping the bulk. I lean toward: delete
+after 90 days, and null `last_datarefs` after 7. Two thresholds, one command.
+
+**Do not** wire this into `POST_MIGRATE_COMMANDS` before it has run clean with
+`--dry-run` on production data. A prune bug at deploy time is a data-loss bug,
+and unlike the content import there is no fixture to restore from.
+
+**Verify**: `--dry-run` on a copy of the production database first, row counts
+per table before and after.
+
+---
 
 ### [ ] 5.3 **[code]** Custom 404 and 500 templates
-With `DEBUG=False`, public visitors currently get Django's bare white pages.
+
+With `DEBUG=False` a visitor currently gets Django's bare white page.
+`TEMPLATES` has `DIRS: []` and `APP_DIRS: True`, so the files go at
+`checklist/templates/404.html` and `checklist/templates/500.html` — the app
+template root, not under `checklist/templates/checklist/`.
+
+**One exact constraint, verified in the installed Django source**
+(`django/views/defaults.py`):
+
+- `page_not_found` calls `template.render(context, request)` — the request is
+  passed, so **context processors run**. `404.html` may extend `base.html` and
+  will get `sop`, `user` and `request` as usual.
+- `server_error` calls `template.render()` — no request, no context, **no
+  context processors**. A `500.html` extending `base.html` will not crash
+  (Django resolves missing variables to empty), but every nav item, the SOP
+  name and the auth state render blank.
+
+So `500.html` should be self-contained: its own minimal markup, inline or
+`{% load static %}`-linked CSS, no dependency on `sop_context`. `404.html` can
+use the real shell.
+
+**Verify**: with `DEBUG=False` and `ALLOWED_HOSTS` set, hit a bad URL for the
+404; for the 500, add a temporary view that raises, or use the Django test
+client with `raise_request_exception=False`.
+
+---
 
 ### [ ] 5.4 **[decide + code]** Rate limiting
-Nothing throttles `/login/`, `/register/` or `/admin/`. Options: `django-axes`
-(full-featured, adds a dependency and tables), a small middleware, or Apache/
-cPanel-level throttling. **[decide]** which fits the shared-hosting constraints.
+
+Nothing throttles `/login/`, `/register/`, the password-reset form or
+`/admin/`.
+
+**A constraint that rules out the usual answer**: no `CACHES` is configured in
+any settings module, so Django falls back to `LocMemCache`, which is
+**per-process**. The app runs under Passenger with several workers, so a
+cache-based limiter (`django-ratelimit` and most hand-rolled middleware) would
+keep a separate counter per worker and let an attacker through roughly
+`n_workers` times the intended rate. Any cache-based option therefore also
+requires a shared cache backend — on this host that means the database cache
+table (`createcachetable`), since there is no Redis or Memcached.
+
+| option | cost | notes |
+|---|---|---|
+| `django-axes` | new dependency + migrations | purpose-built for login lockout, DB-backed so worker-safe, admin integration |
+| `django-ratelimit` + DB cache table | new dependency + `createcachetable` | flexible, applies to any view, but needs the shared cache to be correct |
+| hand-rolled middleware + DB cache table | no dependency, more code to own | same cache requirement; a lockout table is most of `axes` reimplemented |
+| Apache / cPanel throttling | no code | coarse, per-IP, and configured outside the repo so it is invisible to the project |
+
+**[decide]** which. For ~50 users on shared hosting my recommendation is
+`django-axes`: it is DB-backed so the worker problem disappears, it is the
+narrowest fit (failed-login lockout is the actual threat), and it needs no
+cache infrastructure.
+
+**Verify**: n failed logins from one IP produce a lockout; a successful login
+resets the counter; the lockout does not trip a legitimate user behind NAT too
+easily — check `AXES_LOCKOUT_PARAMETERS` before shipping.
+
+---
+
+### [ ] 5.5 **[code + server]** Stop discarding `logs/` on every deploy
+
+Not in the original outline; found while checking 5.2. `logs/django.log` —
+`django.request` errors at ERROR and everything from `checklist` at INFO — is
+written inside the release directory and is **not** in `SHARED_PATHS`, so each
+deploy starts a new empty one and the previous release's history goes with the
+old release tree. The same is true of `logs/session_<id>.jsonl`.
+
+That undercuts the Phase 1 logging work: the first thing wanted after an
+incident is the log from before the fix was deployed.
+
+**Change**: add `logs` to `SHARED_PATHS` in `deploy/simflow_config.sh` so
+`activate.sh` symlinks `~/domains/shared/simflow/logs` into each release.
+
+**Check first** — I have not verified either of these and both must hold
+before this ships:
+1. That `activate.sh` in the installed `www_installer` creates a shared path
+   that does not yet exist, rather than failing.
+2. That the directory is writable by the Passenger user, since
+   `settings/prod.py:75` calls `_LOG_DIR.mkdir(exist_ok=True)` at import time
+   — through a symlink to a read-only target that raises during startup.
+
+Once logs persist, 5.2's retention needs to cover the `.jsonl` files too,
+because they stop being bounded by the release. Sequence 5.5 before 5.2's
+final shape, or the prune command gets written against the wrong assumption.
+
+---
+
+### [ ] 5.6 **[code]** Bound `_last_gate_item`
+
+`plugin_views.py:106` keeps a module-level `dict[int, int | None]` keyed by
+flight-session id, written on every gate change and never pruned. It grows for
+the life of the worker process, one entry per session that worker ever served.
+
+Tiny — two ints per entry, so thousands of sessions is still kilobytes — and a
+worker restart clears it, so this is housekeeping, not a leak that will bite.
+Worth fixing while the file is open: drop the entry when a session goes
+inactive, or replace the dict with a bounded mapping.
+
+**Verify**: a unit test asserting the entry is gone after the session ends.
 
 ### 🚦 Gate 5
+
+**Decisions needed before any of this is written**: 5.1 cron vs deploy-hook,
+5.2 retention window and whether to null `last_datarefs` separately, 5.4 which
+limiter. 5.3, 5.5 and 5.6 need no decision.
+
+**Suggested order**: 5.5 first (it changes what 5.2 must handle), then 5.1 and
+5.3 (small, independent), then 5.2, then 5.4. 5.6 rides along with whichever
+change opens `plugin_views.py`.
 
 ---
 
@@ -671,10 +847,11 @@ Currently three lines and a coverage snippet. Needs: what SimFlow is, that it is
 737/Zibo-specific, the X-Plane + XPPython3 requirement, where to get the plugin,
 how the API key works, and a screenshot.
 
-### [ ] 7.2 **[decide + code]** Add a `LICENSE`
+### [ ] 7.2 **[code]** Add a `LICENSE` — **decided: MIT**
 A public repo with no licence means nobody knows what they may do with it.
-**[decide]** which — MIT and Apache-2.0 are the usual choices for something like
-this.
+~~**[decide]** which~~ — **MIT**, chosen 2026-09-27. Add `LICENSE` at the repo
+root with the standard text, and name it in the README and in
+`pyproject.toml`'s `license` field.
 
 ### [ ] 7.3 **[code]** Fix stale documentation
 - `docs/RELEASE.md` §1 step 2 still describes a manual `install.sh`/`deploy.sh`
