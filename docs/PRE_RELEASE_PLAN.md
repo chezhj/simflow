@@ -521,15 +521,35 @@ The arithmetic is the finding. `requests` spent 579 − 110 = **469 ms** setting
 a connection that raw sockets set up in **94 ms**. The 375 ms difference moves no
 packets: the raw-socket stage built its `SSLContext` once, outside the timing,
 while `requests.get()` at module level builds a new `Session`, pool and
-`SSLContext` for every call — and creating that context loads the platform
-certificate store. On Windows that is not cheap, and the plugin was paying it
-twice a second.
+`SSLContext` for every call.
+
+> **Correction, measured after the fix.** `SSLContext` creation was the named
+> suspect and it is *not* the cost: a dedicated probe stage puts it at **31 ms**.
+> Across three runs, `requests`' per-connection setup was 438–454 ms while DNS,
+> TCP, the TLS handshake and context creation together accounted for only
+> 109–126 ms. **~340 ms remains unidentified.** The likeliest remaining candidate
+> is urllib3 loading certifi's CA bundle — a ~290 KB PEM parsed per connection,
+> which the context stage does not cover because `ssl.create_default_context()`
+> reads the OS trust store rather than certifi's file. Unverified.
+>
+> The diagnosis (per-call connection setup) and the fix (pool it) were right;
+> the mechanism named for it was wrong. Pooling makes it moot — whatever the
+> 340 ms is, it is now paid once per session instead of twice a second.
 
 **Fix**: one pooled `requests.Session`, built on first use and closed on
 disable (`_http_session`). Verified against a real socket, not mocks: 10 GETs
 and 10 POSTs now share **one** TCP connection where the old path opened ten,
 and a connection dropped by the server is recovered rather than raising.
-Expected effect on the sim PC, from its own numbers: **~579 ms → ~110 ms.**
+
+**Confirmed on the sim PC**, three runs of the probe carrying both paths:
+
+| | median |
+|---|---|
+| `GET /` unpooled (old path) | 563–594 ms |
+| `GET /` pooled (current) | **125–140 ms** |
+| `GET /api/plugin/session/` pooled | 125–156 ms |
+
+**4.4× faster**, comfortably inside the 500 ms tick.
 
 The adapter carries one `connect` retry. The plugin polls every 500 ms so the
 connection is rarely idle long enough to go stale, but it does idle out during
@@ -540,14 +560,29 @@ Two things deliberately *not* concluded from this: WAL is still not indicated
 (4.1 above), and the remaining gap between the sim PC's 110 ms and the dev
 machine's 20 ms is mostly the 3x RTT, not server work.
 
-### [ ] 4.4 **[verify]** Re-run `net_probe` on the sim PC after the pooling fix
+### [x] 4.4 **[done]** Re-run `net_probe` on the sim PC after the pooling fix
 
-The probe now reports `GET / unpooled (old path)` and `GET / pooled (current)`
-side by side, so the before/after is visible on the machine that has the
-problem. Expect the pooled line near the old reused-connection figure (~110 ms)
-and the unpooled line near the old fresh figure (~579 ms). Then fly and check
-`state response status 200 in N ms` in `XPPython3Log.txt` — that is the number
-that was 593 ms.
+Done — the figures are in the table above. The pooled line landed where the old
+reused-connection figure predicted.
+
+### [ ] 4.5 **[verify]** Confirm the win in flight, not just in the probe
+
+Fly and read `state response status 200 in N ms` in `XPPython3Log.txt`. That is
+the line that read 593 ms; expect ~125–160 ms. The probe times `GET /`, not the
+state POST with a real payload, so this is the number that actually settles it.
+
+The `HTTP backlog full` warnings should also stop: at a 500 ms tick a 593 ms
+round trip could not keep up, and ~140 ms has room to spare.
+
+### [ ] 4.6 **[release]** Ship the pooling fix as a plugin release
+
+The fix is only on the sim PC as a hand-copied file. It needs a plugin bump and
+release before the announce, or new users get the 593 ms path.
+
+**Optional, not blocking**: the ~340 ms above is unidentified. A probe stage
+timing `load_verify_locations(certifi.where())` would confirm or kill the CA
+bundle theory. Worth knowing, worth nothing to users — pooling already removed
+it from the hot path.
 
 <details>
 <summary>Original 4.3 plan, before the probe answered it</summary>

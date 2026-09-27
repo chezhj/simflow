@@ -712,9 +712,10 @@ class PythonInterface:
             return
 
         if secure:
-            # Timed on its own because this is where the cost turned out to
-            # live: it loads the platform certificate store, no packets
-            # involved, and requests.get() at module level pays it per call.
+            # Timed on its own because it was the prime suspect for the
+            # several hundred milliseconds requests spent per connection. It
+            # is not: it measures ~31 ms on the sim PC. Kept because ruling a
+            # cause out is worth the five samples.
             self._probe_stage("SSL context create (no net)",
                               ssl.create_default_context)
 
@@ -1018,13 +1019,19 @@ class PythonInterface:
         """
         The shared requests.Session, created on first use.
 
-        Measured on the sim PC with xFlow/net_probe: a fresh-connection GET
-        cost 579 ms against 110 ms on a reused one, while the same TCP and TLS
-        handshake done with raw sockets cost 94 ms. The 375 ms difference never
-        touches the network — requests.get() at module level builds a new
-        Session, pool and SSLContext for every call, and creating that context
-        loads the platform certificate store each time. One pooled Session
-        builds it once.
+        Measured on the sim PC with xFlow/net_probe. requests.get() at module
+        level builds a new Session, pool and connection for every call, and
+        that setup cost 438-454 ms while DNS, TCP, the TLS handshake and
+        SSLContext creation together accounted for only 109-126 ms of it. The
+        remaining ~340 ms moves no packets and is unidentified; the likeliest
+        candidate is urllib3 loading certifi's CA bundle — a ~290 KB PEM
+        parsed per connection, which the probe's SSLContext stage does not
+        cover because ssl.create_default_context() reads the OS trust store
+        instead. Pooling makes the question moot: whatever it is, it is paid
+        once per session rather than twice a second.
+
+        Effect on the sim PC, same probe: 563-594 ms unpooled against
+        125-140 ms pooled.
 
         Only the HTTP worker thread calls this, so it needs no lock.
         """
