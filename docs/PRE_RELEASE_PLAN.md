@@ -847,66 +847,82 @@ than bounded by the release, so retention has to cover them. Factored in below.
 **Verify after the next deploy**: `ls -l <release>/logs` shows a symlink, and
 `django.log` still holds entries written before that deploy.
 
-### [ ] 5.7 **[code]** Derive the plugin compatibility window instead of configuring it
+### [x] 5.7 **[done]** The compatibility window is derived, not configured
 
-**Decided 2026-09-27**: `PLUGIN_MIN_VERSION` and `PLUGIN_WARN_BELOW` should go
-away. The rule becomes semantic rather than configured:
+`PLUGIN_MIN_VERSION` and `PLUGIN_WARN_BELOW` are gone. The rule is now
+semantic, in `plugin_status_for_version`:
 
-- **major mismatch → blocked** (the wire protocol changed)
-- **minor mismatch → warn** (the plugin still works, but is behind)
-- patch difference → ok
-
-That is a better rule than the sliding window, for a reason this release
-demonstrated: the window has to be hand-slid in lockstep with every plugin
-release, and doing it in the wrong order ships an app that warns about the
-plugin shipped beside it. `TestTheRealWindowIsSane` now catches that, but not
-needing to remember it at all is better.
-
-**The one thing to resolve**: "mismatch" needs something to compare against —
-the current plugin version, which today only exists as `PLUGIN_VERSION` in
-`xplane_plugin/xFlow/PI_xFlow.py`. Options:
-
-| source | notes |
+| reported version | status |
 |---|---|
-| parse `PI_xFlow.py` at startup | single source of truth, no duplication; couples app startup to a file in the plugin tree, which does ship in the release |
-| a `CURRENT_PLUGIN_VERSION` setting written by `bump_plugin.py` | no runtime parsing, but re-introduces a constant — one, derived automatically, instead of two maintained by hand |
-| read from the plugin CHANGELOG's top entry | same coupling, looser format |
+| a **major** behind | `blocked` — the wire protocol changed |
+| a **minor** behind | `warn` — still works, missing fixes |
+| a **patch** behind | `ok` — patch releases never move the window |
+| equal or **newer** | `ok` |
 
-Parsing `PI_xFlow.py` is the closest to "no constants", and
-`TestTheRealWindowIsSane.test_the_blocked_band_does_not_reach_the_current_release`
-already does exactly that parse, so the regex is written and tested.
+**Newer is deliberately `ok`, not blocked.** A plugin release is tagged
+*before* the app release that accompanies it, so there is always a window
+where a keen pilot runs a plugin this app has not heard of. Blocking them
+would punish them for the project's own release order, and the app is the one
+behind. An unreadable version stays `warn`, as before.
 
-`plugin_status_for_version` keeps its current contract — `'ok' | 'warn' |
-'blocked'`, with an unreadable version classified `warn` rather than `blocked`
-— so nothing downstream changes. The tests in
-`checklist/tests/test_plugin_version_notice.py` pin the behaviour and should
-be rewritten against version *pairs* rather than absolute tuples.
+> **The planned implementation would not have worked.** 5.7 named "parse
+> `PI_xFlow.py` at startup" as closest to "no constants". It is not viable:
+> `.github/workflows/release-deploy.yaml` line 134 excludes `xplane_plugin`
+> from the rsync, so `PI_xFlow.py` **is not present in a deployed release**.
+> Parsing it would have worked in dev and in tests and silently done nothing
+> in production — the worst of the three outcomes.
 
-**Until this ships**, the window is slid by hand at each plugin release, one
-minor at a time, per the policy comment in `settings/base.py`.
+So the source of truth is `checklist/plugin_version.py`, a generated file
+holding one string, written by `scripts/bump_plugin.py` in the same commit
+that bumps `PI_xFlow.py`. That is a derived fact rather than a policy knob:
+the two thresholds that had to be reasoned about are gone, and what remains
+cannot be got wrong by hand because nothing maintains it by hand.
+`test_the_marker_matches_the_plugin_source` fails if the two ever drift —
+the only place both files exist together is a test run from the repo.
 
-### [ ] 5.6 **[code]** Bound `_last_gate_item`
+**This closes the deferred decision from the 1.2.0 release.** With
+`CURRENT_PLUGIN_VERSION = "1.2.0"`, verified against the real released
+versions: `0.7.0` blocked, `1.0.2`/`1.1.0`/`1.1.2` warned, `1.2.0` and above
+ok. 1.1.x pilots are now nudged toward 1.2.0 automatically, which is what the
+hand slide would have done — without the hand slide, and without the risk of
+doing it in the wrong order.
 
-`plugin_views.py:106` keeps a module-level `dict[int, int | None]` keyed by
-flight-session id, written on every gate change and never pruned. It grows for
+Note this is *more lenient* than the old sliding-window policy would have
+been: 1.0.2 now warns rather than being blocked, because it shares a major
+with the current release. That is the right answer — 1.0.2 works, it is just
+old — and it is now a consequence of the rule rather than a judgement call
+made per release.
+
+### [x] 5.6 **[done]** `_last_gate_item` is bounded
+
+`plugin_views.py` kept a module-level `dict[int, int | None]` keyed by
+flight-session id, written on every gate change and never pruned. It grew for
 the life of the worker process, one entry per session that worker ever served.
 
-Tiny — two ints per entry, so thousands of sessions is still kilobytes — and a
-worker restart clears it, so this is housekeeping, not a leak that will bite.
-Worth fixing while the file is open: drop the entry when a session goes
-inactive, or replace the dict with a bounded mapping.
+Now an `OrderedDict` capped at 256 entries with least-recently-**used**
+eviction — reads count as use, so a session being polled every few seconds is
+not evicted by a burst of new ones just because its gate has not moved. The
+only consequence of an eviction is a duplicate `gate_changed` line if a
+long-dormant session returns, which is harmless: the log is an audit trail,
+not a state machine.
 
-**Verify**: a unit test asserting the entry is gone after the session ends.
+`None` is a real value (no gate item in this phase) and is kept distinct from
+the unseen sentinel `_GATE_UNSEEN = -1`; collapsing the two would either lose
+a `gate_changed` line or emit a spurious one. 8 tests in
+`checklist/tests/test_gate_cache.py`.
+
+Always was housekeeping rather than a leak that would bite — two ints an
+entry, cleared by a restart — but unbounded growth in a long-lived process is
+not worth keeping.
 
 ### 🚦 Gate 5
 
-**Done**: 5.1, 5.2, 5.3, 5.4, 5.5.
+**Done**: all of 5.1–5.7.
 
-**Decisions still needed**: none. 5.6 and 5.7 are all that remain.
+**Decisions still needed**: none.
 
-**Suggested order**: 5.6 rides along with whichever change opens
-`plugin_views.py`. 5.7 is independent and can wait for a quiet moment after
-the release. Phase 5 is otherwise complete.
+**Phase 5 is complete.** Next: Phase 6 (server-side SSL redirect and the
+HSTS ramp), then Phase 7 — the actual announce blocker.
 
 ---
 

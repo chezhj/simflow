@@ -213,24 +213,15 @@ CLEANUP_MIN_INTERVAL_HOURS = 24       # how often the flight-start trigger fires
 
 # ── Plugin compatibility window ────────────────────────────────────────────── #
 #
-# PLUGIN_MIN_VERSION  — plugins below this tuple are blocked (response includes
-#                       plugin_status: "blocked" and the update URL).
-# PLUGIN_WARN_BELOW   — plugins at or above MIN but below this get a warning.
+# There is nothing to configure. checklist/plugin_views.py derives the window
+# from checklist/plugin_version.py: a plugin a major version behind is blocked,
+# a minor version behind is warned, a patch behind is fine, and one newer than
+# this app is fine too. See plugin_status_for_version for why each of those is
+# the way round it is.
 #
-# Sliding-window policy: when a new minor version ships, the previous minor
-# version moves to "warn" and the one before that moves to "blocked".
-# Patch-only releases (1.0.x → 1.0.y) never change the window.
-
-# Set at the 1.1.0 release. Nothing in 1.1.0 changed the wire protocol — the
-# changes are a dataref-type cache, a persistent worker thread and a faster
-# tick — so a 1.0.2 plugin still works correctly, just slower. Blocking it
-# would be gratuitous; warning is what the window is for.
-#
-# Setting MIN to the current version instead would leave the warn band empty,
-# because "blocked" is tested first and would catch everything below it — so
-# nobody would ever see a warning.
-PLUGIN_MIN_VERSION = (1, 0, 2)   # the oldest version ever released; blocks nothing that exists
-PLUGIN_WARN_BELOW  = (1, 1, 0)   # anything older than the current release is nudged
+# PLUGIN_MIN_VERSION and PLUGIN_WARN_BELOW used to live here. They had to be
+# slid by hand at every plugin release, and getting the order wrong shipped an
+# app that warned about the plugin shipped beside it.
 
 # Where a pilot is sent to get the plugin.
 #
