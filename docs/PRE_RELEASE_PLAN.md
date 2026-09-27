@@ -744,37 +744,82 @@ in `checklist/tests/test_error_pages.py`; `djlint` clean.
 **Not done**: `400.html`. It is almost entirely bots with bad `Host` headers,
 renders with no context like 500, and no real user sees it.
 
-### [ ] 5.4 **[decide + code]** Rate limiting
+### [x] 5.4 **[done]** Login throttling — django-axes
 
-Nothing throttles `/login/`, `/register/`, the password-reset form or
-`/admin/`.
+**Decided**: `django-axes` 8.3.1, for the reason the options table gave — its
+default handler is `AxesDatabaseHandler`, so counters live in the database. A
+cache-backed limiter would fall back to `LocMemCache`, which is per-Passenger
+worker, and an attacker would get `failure_limit × n_workers` attempts.
 
-**A constraint that rules out the usual answer**: no `CACHES` is configured in
-any settings module, so Django falls back to `LocMemCache`, which is
-**per-process**. The app runs under Passenger with several workers, so a
-cache-based limiter (`django-ratelimit` and most hand-rolled middleware) would
-keep a separate counter per worker and let an attacker through roughly
-`n_workers` times the intended rate. Any cache-based option therefore also
-requires a shared cache backend — on this host that means the database cache
-table (`createcachetable`), since there is no Redis or Memcached.
+**Every configured value overrides an axes default that is wrong here.**
+Dropping any line is a bug, not a simplification, and each has a test:
 
-| option | cost | notes |
-|---|---|---|
-| `django-axes` | new dependency + migrations | purpose-built for login lockout, DB-backed so worker-safe, admin integration |
-| `django-ratelimit` + DB cache table | new dependency + `createcachetable` | flexible, applies to any view, but needs the shared cache to be correct |
-| hand-rolled middleware + DB cache table | no dependency, more code to own | same cache requirement; a lockout table is most of `axes` reimplemented |
-| Apache / cPanel throttling | no code | coarse, per-IP, and configured outside the repo so it is invisible to the project |
+| setting | axes default | ours | why |
+|---|---|---|---|
+| `AXES_FAILURE_LIMIT` | 3 | **5** | 3 is reachable by honest mistyping on a phone |
+| `AXES_COOLOFF_TIME` | `None` | **30 min** | `None` means the lockout **never expires** and needs `manage.py axes_reset` by hand |
+| `AXES_RESET_ON_SUCCESS` | `False` | **True** | otherwise failures bank up across successful logins forever |
+| `AXES_LOCKOUT_PARAMETERS` | `["ip_address"]` | **`[["username", "ip_address"]]`** | see below |
 
-**[decide]** which. For ~50 users on shared hosting my recommendation is
-`django-axes`: it is DB-backed so the worker problem disappears, it is the
-narrowest fit (failed-login lockout is the actual threat), and it needs no
-cache infrastructure.
+**The lockout parameter is the one that matters.** A nested list is AND in
+axes; a flat list is OR.
 
-**Verify**: n failed logins from one IP produce a lockout; a successful login
-resets the counter; the lockout does not trip a legitimate user behind NAT too
-easily — check `AXES_LOCKOUT_PARAMETERS` before shipping.
+- `ip_address` alone — one NAT'd club, household or mis-detected proxy locks
+  out everyone behind it.
+- `username` alone — trivial denial of service: anyone who knows a username
+  can lock that pilot out of their own checklist.
+- the combination — an attacker locks only their own address against that
+  username; the real pilot, from their own address, is unaffected.
 
----
+The cost is that a distributed attacker gets 5 tries per address. For ~50
+accounts that is the right trade: password strength is the actual defence, and
+locking a real pilot out mid-preflight is the failure that would hurt.
+Two tests cover exactly these two failure modes, so a later "simplification"
+to a flat list fails loudly.
+
+`AXES_IPWARE_META_PRECEDENCE_ORDER` is left at `("REMOTE_ADDR",)`. Trusting
+`X-Forwarded-For` without a known proxy count lets a client spoof its address
+and bypass the lockout; a test asserts a forwarded header cannot move the
+recorded address.
+
+**Lockout page**: `checklist/templates/lockout.html`, "Hold short", 429. axes
+renders it through `render(request, ...)`, so context processors run and it
+extends `base.html`. The wait is rendered by a new `natural_duration` filter
+reading axes' own `cooloff_timedelta` — "30 minutes" rather than "0:30:00",
+and from the same setting the lockout uses, so the copy cannot drift. The
+attempted username is not echoed, for the same reason as the 404 path.
+
+Lockouts now reach `logs/django.log`: the `axes` logger is not under `django`,
+so without an explicit entry in `prod.py` it propagated to a handler-less root
+and Python's lastResort sent it to stderr — the server error log, not ours.
+
+> **A real bug this caught, which had nothing to do with throttling.** Adding
+> `AxesStandaloneBackend` gave the project two `AUTHENTICATION_BACKENDS`, and
+> `login(request, user)` can only infer the backend when there is exactly one.
+> `register_view` calls `login()` directly on a freshly created user, never
+> through `authenticate()`, so it began raising `AttributeError: 'User' object
+> has no attribute 'backend'` — **registration was broken outright**. Fixed by
+> naming `ModelBackend` explicitly (`AxesStandaloneBackend` only ever raises
+> for a locked-out attempt; it never returns a user, so it can never be the
+> backend a session was established with). Four existing tests caught it, and
+> a dedicated test now lives beside the change that caused it.
+
+**Two gaps this does NOT close**, stated rather than implied:
+
+- **Registration spam.** axes throttles failed *authentication*. Bulk account
+  creation at `/register/` is untouched. If it ever happens, the answer is a
+  CAPTCHA or email confirmation before activation, not axes.
+- **Password-reset email flooding.** The reset form is not an authentication
+  attempt, so it is not counted. Django's reset view already refuses to
+  confirm whether an account exists, so enumeration is covered; volume is not.
+
+17 tests in `checklist/tests/test_login_throttling.py`. Verified by driving a
+real lockout end to end against a live database: five failures returned 429
+with the custom page, and the *correct* password was then refused.
+
+**On the server**: `manage.py axes_reset` clears all lockouts,
+`axes_reset_username <name>` clears one. Worth knowing before the first
+support message.
 
 ### [x] 5.5 **[done]** Stop discarding `logs/` on every deploy
 
@@ -855,13 +900,13 @@ inactive, or replace the dict with a bounded mapping.
 
 ### 🚦 Gate 5
 
-**Done**: 5.1, 5.2, 5.3, 5.5.
+**Done**: 5.1, 5.2, 5.3, 5.4, 5.5.
 
-**Decisions still needed**: 5.4, which limiter. 5.6 and 5.7 need no decision.
+**Decisions still needed**: none. 5.6 and 5.7 are all that remain.
 
-**Suggested order**: 5.4 next, once the limiter is chosen. 5.6 rides along
-with whichever change opens `plugin_views.py`. 5.7 is independent and can wait
-for a quiet moment after the release.
+**Suggested order**: 5.6 rides along with whichever change opens
+`plugin_views.py`. 5.7 is independent and can wait for a quiet moment after
+the release. Phase 5 is otherwise complete.
 
 ---
 

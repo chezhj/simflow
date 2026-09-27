@@ -10,6 +10,7 @@ For the full list of settings and their values, see
 https://docs.djangoproject.com/en/4.1/ref/settings/
 """
 
+from datetime import timedelta
 from pathlib import Path
 from decouple import config
 from .. import __version__
@@ -27,6 +28,7 @@ VERSION = __version__
 INSTALLED_APPS = [
     "checklist.apps.ChecklistConfig",
     "colorfield",
+    "axes",
     "django.contrib.admin",
     "django.contrib.auth",
     "django.contrib.contenttypes",
@@ -43,6 +45,17 @@ MIDDLEWARE = [
     "django.contrib.auth.middleware.AuthenticationMiddleware",
     "django.contrib.messages.middleware.MessageMiddleware",
     "django.middleware.clickjacking.XFrameOptionsMiddleware",
+    # Must be last: it wraps the response and needs every other middleware to
+    # have run first, so the login attempt it inspects is the finished one.
+    "axes.middleware.AxesMiddleware",
+]
+
+# AxesStandaloneBackend must come FIRST. Django tries backends in order and
+# stops at the first that returns a user, so a ModelBackend ahead of it would
+# authenticate a locked-out attacker before axes was ever consulted.
+AUTHENTICATION_BACKENDS = [
+    "axes.backends.AxesStandaloneBackend",
+    "django.contrib.auth.backends.ModelBackend",
 ]
 
 ROOT_URLCONF = "smart_training_checklist.urls"
@@ -128,6 +141,60 @@ MOCK_TOKEN = config("X-Auth-Token", default=None)
 # `if new_state != prev_state` (api_views.py), and its query count is flat in
 # procedure size and ceiling-tested (test_query_counts.py).
 POLL_INTERVAL_MS = 750
+
+# ── Login throttling (django-axes) ─────────────────────────────────────────── #
+#
+# Nothing throttled /login/, /register/ or /admin/ before this.
+#
+# axes was chosen over django-ratelimit and a hand-rolled middleware for one
+# reason: its default handler is AxesDatabaseHandler, so the counters live in
+# the database. No CACHES is configured here, which means LocMemCache — and
+# that is per-process, so under Passenger every worker would keep its own
+# count and an attacker would get failure_limit x n_workers attempts.
+#
+# Every value below overrides an axes default that is wrong for this app.
+# Leaving any of them out is a bug, not a simplification.
+
+# Locks the PAIR, not either alone. The nested list is AND in axes; a flat
+# list would be OR.
+#
+#   ip_address alone  — one NAT'd club or a mis-detected proxy address locks
+#                       out everyone behind it.
+#   username alone    — trivial denial of service: anyone who knows a
+#                       username can lock that pilot out at will.
+#   the combination   — an attacker locks only their own address against that
+#                       username; the real pilot, from their own address, is
+#                       unaffected.
+#
+# The cost is that a distributed attacker gets AXES_FAILURE_LIMIT tries per
+# address. Against a hobby app with ~50 accounts that is the right trade:
+# password strength is the actual defence, and locking real pilots out of
+# their own checklist mid-preflight is the failure that would actually hurt.
+AXES_LOCKOUT_PARAMETERS = [["username", "ip_address"]]
+
+# axes defaults to 3, which a pilot mistyping a password on a phone can reach
+# honestly.
+AXES_FAILURE_LIMIT = 5
+
+# axes defaults to None, which means the lockout NEVER expires and has to be
+# cleared by hand with `manage.py axes_reset`. That turns one bad afternoon
+# into a support request.
+AXES_COOLOFF_TIME = timedelta(minutes=30)
+
+# axes defaults to False, so failures accumulate across successful logins —
+# fail twice on Monday, twice on Tuesday, and the next slip locks you out.
+AXES_RESET_ON_SUCCESS = True
+
+# Rendered with the request, so it gets the context processors and can extend
+# base.html. Served with 429, which axes sets via AXES_HTTP_RESPONSE_CODE.
+AXES_LOCKOUT_TEMPLATE = "lockout.html"
+
+# AXES_IPWARE_META_PRECEDENCE_ORDER defaults to ("REMOTE_ADDR",) — deliberately
+# left alone. Trusting X-Forwarded-For without knowing the proxy count lets a
+# client spoof its own address and bypass the lockout entirely. If cPanel ever
+# fronts this app with something that hides the client address, the symptom is
+# every attempt sharing one IP, and the fix is AXES_IPWARE_PROXY_COUNT — not
+# adding the header to the precedence order.
 
 # ── Data retention ─────────────────────────────────────────────────────────── #
 #

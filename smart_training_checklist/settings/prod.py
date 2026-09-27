@@ -111,6 +111,12 @@ LOGGING = {
             "propagate": False,
         },
         "checklist": {"handlers": ["file"], "level": "INFO", "propagate": False},
+        # Lockouts and repeated failures are security events and belong in the
+        # same file as everything else. Without this the "axes" logger is not
+        # under "django", so it propagates to a root logger with no handler
+        # and Python's lastResort sends it to stderr — which under Passenger
+        # lands in the server error log, not logs/django.log.
+        "axes": {"handlers": ["file"], "level": "INFO", "propagate": False},
     },
 }
 

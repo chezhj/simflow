@@ -12,6 +12,7 @@ dependencies = [
     "python-decouple (>=3.8,<4.0)",
     "django-colorfield (>=0.14.0,<0.15.0)",
     "requests (>=2.32.3,<3.0.0)",
+    "django-axes (>=8.3.1,<9.0.0)",
 ]
 
 
