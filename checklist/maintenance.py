@@ -77,6 +77,17 @@ class CleanupReport:
 
 
 def _log_dir() -> Path:
+    """
+    Where the per-session .jsonl files live.
+
+    Overridable via CLEANUP_LOG_DIR so scripts/prune_dry_run.py can point at a
+    copy of the server's logs. Without that the dry run reports the DATABASE
+    from production against the LOG DIRECTORY of whatever machine it runs on,
+    and the file count it prints is about the wrong computer entirely.
+    """
+    override = getattr(settings, "CLEANUP_LOG_DIR", None)
+    if override:
+        return Path(override)
     return Path(settings.BASE_DIR) / "logs"
 
 

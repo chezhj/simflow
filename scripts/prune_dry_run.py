@@ -42,6 +42,13 @@ def main() -> int:
     parser.add_argument(
         "--orphan-days", type=int, default=None, help="override CLEANUP_ORPHAN_DAYS"
     )
+    parser.add_argument(
+        "--logs-dir",
+        default=None,
+        help="a copy of the server's logs/ directory. Without it the session "
+        "log-file count describes THIS machine's logs, not production's — the "
+        "database is a copy but the log directory is whatever is local.",
+    )
     args = parser.parse_args()
 
     source = Path(args.database).expanduser().resolve()
@@ -82,12 +89,20 @@ def main() -> int:
         from django.conf import settings
 
         settings.DATABASES["default"]["NAME"] = str(scratch)
+        if args.logs_dir:
+            settings.CLEANUP_LOG_DIR = str(Path(args.logs_dir).expanduser().resolve())
 
         from django.core.management import call_command
 
         from checklist.models import FlightSession
 
         print(f"inspecting a copy of: {source}")
+        if args.logs_dir:
+            print(f"session logs from   : {args.logs_dir}")
+        else:
+            print("session logs        : NOT CHECKED — pass --logs-dir with a "
+                  "copy of the server's logs/, or the file count below is "
+                  "about this machine")
         print(f"flight sessions in it: {FlightSession.objects.count()} "
               f"({FlightSession.objects.filter(user_profile__isnull=True).count()} "
               f"with no owner)")

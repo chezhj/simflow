@@ -14,6 +14,7 @@ content import there is no fixture to restore from.
 # pylint: disable=missing-class-docstring
 # pylint: disable=missing-function-docstring
 
+import pathlib
 from datetime import timedelta
 from unittest.mock import Mock, patch
 
@@ -393,3 +394,35 @@ class TestTheFlightStartTrigger(ViewTestCase):
 
         self.assertEqual(response.status_code, 302)
         self.assertIn("flight_session_key", request.session)
+
+
+class TestTheLogDirectoryIsOverridable(_RetentionBase):
+    """
+    CLEANUP_LOG_DIR exists for scripts/prune_dry_run.py. Without it, a dry run
+    against a copy of the production database reports the file count of
+    whatever machine it runs on — production data, local logs, one number
+    presented as if both came from the same place.
+    """
+
+    def test_the_override_is_used_when_set(self):
+        import tempfile
+        from pathlib import Path
+
+        from django.test import override_settings
+
+        doomed = _session(self.profile, age_days=99)
+        with tempfile.TemporaryDirectory() as tmp:
+            elsewhere = Path(tmp)
+            (elsewhere / f"session_{doomed.pk}.jsonl").write_text("{}\n")
+
+            with override_settings(CLEANUP_LOG_DIR=str(elsewhere)):
+                report = run_cleanup(keep=0, orphan_days=30, dry_run=True)
+
+            self.assertEqual(report.log_files_deleted, 1)
+
+    def test_it_falls_back_to_base_dir_when_unset(self):
+        from django.conf import settings
+
+        self.assertEqual(
+            maintenance._log_dir(), pathlib.Path(settings.BASE_DIR) / "logs"
+        )
