@@ -688,8 +688,30 @@ nothing between deploys. Bounded (~400 bytes a row, ~4 MB per 10,000 visitors)
 and only a daily cron closes it completely. Not worth the cPanel dependency
 now; revisit if the numbers ever say so.
 
-**Before the first production run**: `manage.py checklist_prune --dry-run` on a
-copy of the live database, to see the real counts before anything is deleted.
+**Before the first production run**, inspect a copy — and note the obvious
+plan does not work. "Dry-run on the server before deploying" is impossible:
+`checklist_prune` ships *with* the release and `POST_MIGRATE_COMMANDS` runs it
+in the same activate step, so there is no moment on the server where the
+command exists but has not yet run. Dropping it from `POST_MIGRATE_COMMANDS`
+would not help either, because `run_cleanup_if_due()` fires on the first
+flight afterwards regardless.
+
+So the inspection happens locally, against a copy pulled down first:
+
+```bash
+scp <user>@<host>:domains/shared/simflow/db.sqlite3 /tmp/prod-copy.sqlite3
+python scripts/prune_dry_run.py /tmp/prod-copy.sqlite3
+```
+
+`scripts/prune_dry_run.py` is dry-run only by construction — there is no flag
+that makes it delete — and it works on a temporary duplicate of the copy, so
+being wrong about what `--dry-run` writes costs nothing. It refuses to run
+against this checkout's own `db.sqlite3`.
+
+The real safety net underneath all of this is `activate.sh`, which backs the
+database up before `migrate` — before `POST_MIGRATE_COMMANDS` runs — so a
+prune that did the wrong thing is recoverable with
+`rollback.sh simflow --restore-db`.
 
 ### [x] 5.3 **[done]** Custom 404, 500 and CSRF-failure pages
 
