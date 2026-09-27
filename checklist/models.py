@@ -13,6 +13,7 @@ from django.db import models
 from django.db.models.signals import post_save
 from django.dispatch import receiver
 from django.urls import reverse
+from django.utils import timezone
 
 
 def _generate_session_key():
@@ -512,3 +513,59 @@ class RuleMissReport(models.Model):
 
     def __str__(self) -> str:
         return f"Miss: {self.reported_item_label} @ {self.reported_at:%Y-%m-%d %H:%M:%S}"
+
+
+class MaintenanceState(models.Model):
+    """
+    One row, holding when periodic cleanup last ran.
+
+    Exists so cleanup can be triggered from a request — the start of a flight —
+    without running on every one. Tying it to a request rather than to a cron
+    or a deploy hook makes the clock *usage*: these tables only grow when the
+    app is used, and a deploy hook would fire as often as releases happen,
+    which for a settled product may be twice a year.
+
+    The timestamp cannot live in the cache. No CACHES is configured, so Django
+    falls back to LocMemCache, which is per-process — under Passenger every
+    worker would keep its own idea of when cleanup last ran and each would run
+    its own. A row is shared by all of them.
+    """
+
+    SINGLETON_PK = 1
+
+    last_cleanup = models.DateTimeField(
+        help_text="When run_cleanup last started. Advanced by claim(), not by "
+        "the cleanup finishing — a crashed run must not hold the lock."
+    )
+
+    class Meta:
+        verbose_name_plural = "maintenance state"
+
+    def __str__(self) -> str:
+        return f"cleanup last claimed {self.last_cleanup:%Y-%m-%d %H:%M:%S}"
+
+    @classmethod
+    def claim(cls, interval, now=None) -> bool:
+        """
+        Return True to exactly one caller per `interval`, False to the rest.
+
+        The claim is a single conditional UPDATE, so the check and the write
+        are one atomic statement and two workers arriving together cannot both
+        win: the database applies them in some order, and the second finds
+        last_cleanup already advanced and matches no rows. A read-then-write
+        would let both pass the check before either wrote.
+        """
+        now = now or timezone.now()
+        _, created = cls.objects.get_or_create(
+            pk=cls.SINGLETON_PK, defaults={"last_cleanup": now}
+        )
+        if created:
+            # First run on a fresh install: nothing to clean, and the next
+            # claim is a full interval away.
+            return True
+        return (
+            cls.objects.filter(
+                pk=cls.SINGLETON_PK, last_cleanup__lt=now - interval
+            ).update(last_cleanup=now)
+            == 1
+        )

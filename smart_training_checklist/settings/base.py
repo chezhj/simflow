@@ -129,6 +129,21 @@ MOCK_TOKEN = config("X-Auth-Token", default=None)
 # procedure size and ceiling-tested (test_query_counts.py).
 POLL_INTERVAL_MS = 750
 
+# ── Data retention ─────────────────────────────────────────────────────────── #
+#
+# Applied by checklist/maintenance.py, which runs from the checklist_prune
+# command, from POST_MIGRATE_COMMANDS on deploy, and — behind the interval
+# below — at the start of a flight. The flight trigger is the one that matters:
+# it ties cleanup to usage rather than to release cadence, and these tables
+# only grow when the app is used.
+#
+# One flight is ~170 rows (1 session + 19 eager attribute rows + up to 363 lazy
+# item states) plus a last_datarefs snapshot, all inside db.sqlite3, so this is
+# what keeps the pre-migrate backup from growing without limit.
+CLEANUP_KEEP_SESSIONS_PER_USER = 4    # most recent flights kept per account
+CLEANUP_ORPHAN_DAYS = 30              # ownerless sessions, by last contact
+CLEANUP_MIN_INTERVAL_HOURS = 24       # how often the flight-start trigger fires
+
 # ── Plugin compatibility window ────────────────────────────────────────────── #
 #
 # PLUGIN_MIN_VERSION  — plugins below this tuple are blocked (response includes
