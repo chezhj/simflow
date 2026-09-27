@@ -691,33 +691,58 @@ now; revisit if the numbers ever say so.
 **Before the first production run**: `manage.py checklist_prune --dry-run` on a
 copy of the live database, to see the real counts before anything is deleted.
 
-### [ ] 5.3 **[code]** Custom 404 and 500 templates
+### [x] 5.3 **[done]** Custom 404, 500 and CSRF-failure pages
 
-With `DEBUG=False` a visitor currently gets Django's bare white page.
-`TEMPLATES` has `DIRS: []` and `APP_DIRS: True`, so the files go at
-`checklist/templates/404.html` and `checklist/templates/500.html` — the app
-template root, not under `checklist/templates/checklist/`.
+Three templates at `checklist/templates/` — the app template root, since
+`DIRS: []` and `APP_DIRS: True` means Django resolves the bare names. Nothing
+installed ships those names, and `checklist` is first in `INSTALLED_APPS`.
 
-**One exact constraint, verified in the installed Django source**
-(`django/views/defaults.py`):
+Wording is in the aviation register the rest of the UI uses: *Off the charts*,
+*Unable to comply*, *Clearance expired*. Each offers one way out, home.
 
-- `page_not_found` calls `template.render(context, request)` — the request is
-  passed, so **context processors run**. `404.html` may extend `base.html` and
-  will get `sop`, `user` and `request` as usual.
-- `server_error` calls `template.render()` — no request, no context, **no
-  context processors**. A `500.html` extending `base.html` will not crash
-  (Django resolves missing variables to empty), but every nav item, the SOP
-  name and the auth state render blank.
+**The design constraint, verified in the installed Django source:**
 
-So `500.html` should be self-contained: its own minimal markup, inline or
-`{% load static %}`-linked CSS, no dependency on `sop_context`. `404.html` can
-use the real shell.
+| handler | renders with | context processors |
+|---|---|---|
+| `page_not_found` | `template.render(context, request)` | **yes** |
+| `server_error` | `template.render()` | **no** |
+| `csrf_failure` | `t.render(request=request)` | yes, but no context dict |
 
-**Verify**: with `DEBUG=False` and `ALLOWED_HOSTS` set, hit a bad URL for the
-404; for the 500, add a temporary view that raises, or use the Django test
-client with `raise_request_exception=False`.
+So `404.html` and `403_csrf.html` extend `base.html` and keep the nav, while
+**`500.html` is standalone**. Extending base there would resolve `sop`,
+`user` and every `request.session.sb_*` key to empty — Django does not raise on
+a missing variable, so it would render as a shell with the conn-bar reading
+"ORIG → DEST", no SOP and a signed-out nav. `Test500IsStandalone` guards this
+directly: one test renders it against a genuinely empty context, another
+asserts it contains none of `conn-brand`, `info-panel` or `id="page"`, so a
+later tidy-up that makes the three files look alike fails before it ships.
 
----
+`403_csrf.html` was added beyond the original scope: an expired login form
+currently shows Django's *"CSRF verification failed. Request aborted."*, which
+reads as an accusation rather than a stale token. Note `csrf_failure` passes no
+context dict, so `reason`, `no_referer` and `no_cookie` are **not** available —
+a test asserts the template does not reference them.
+
+`{% static %}` is safe inside the 500 handler: no `STATICFILES_STORAGE` or
+`STORAGES` is configured, so it is plain concatenation with `STATIC_URL` and
+cannot raise on a missing manifest. Only `tokens.css` and `components.css` are
+pulled in, with a few lines of inline centring standing in for `layout.css`'s
+`.page`, which assumes a flex body the standalone page does not have. The home
+link is hardcoded to `/` so a `NoReverseMatch` cannot drop the pilot to
+Django's bare fallback.
+
+**Two Django rules cost a round each and are worth remembering**: `{# #}` is
+single-line only, so a multi-line one leaves any `{% %}` inside it to parse as
+a real tag; and `{% extends %}` must be the first tag, so a `{% comment %}`
+header has to sit below it.
+
+**Verified by rendering, not only by assertion**: all three pages were rendered
+against a real database and read back — 404 and 403 with the full shell and the
+SOP row populated, 500 standalone and correct with no context at all. 13 tests
+in `checklist/tests/test_error_pages.py`; `djlint` clean.
+
+**Not done**: `400.html`. It is almost entirely bots with bad `Host` headers,
+renders with no context like 500, and no real user sees it.
 
 ### [ ] 5.4 **[decide + code]** Rate limiting
 
@@ -830,14 +855,13 @@ inactive, or replace the dict with a bounded mapping.
 
 ### 🚦 Gate 5
 
-**Done**: 5.1, 5.2, 5.5.
+**Done**: 5.1, 5.2, 5.3, 5.5.
 
-**Decisions still needed**: 5.4, which limiter. 5.3, 5.6 and 5.7 need no
-decision.
+**Decisions still needed**: 5.4, which limiter. 5.6 and 5.7 need no decision.
 
-**Suggested order**: 5.3 next (small, self-contained), then 5.4. 5.6 rides
-along with whichever change opens `plugin_views.py`. 5.7 is independent and can
-wait for a quiet moment after the release.
+**Suggested order**: 5.4 next, once the limiter is chosen. 5.6 rides along
+with whichever change opens `plugin_views.py`. 5.7 is independent and can wait
+for a quiet moment after the release.
 
 ---
 

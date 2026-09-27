@@ -1,0 +1,41 @@
+{% extends "checklist/base.html" %}
+{% comment %}
+403 — CSRF verification failed, which for a real pilot almost always means the
+login page sat open long enough for the token to expire.
+
+Django's built-in page says "CSRF verification failed. Request aborted.", which
+reads like an accusation rather than an expired form.
+
+django.views.csrf.csrf_failure renders with `t.render(request=request)` — the
+request is passed, so context processors run and extending base.html is safe,
+but NO context dict is passed with it. `reason`, `no_referer` and
+`no_cookie` are therefore NOT available here, however much the Django source
+suggests otherwise; referencing them yields empty strings.
+{% endcomment %}
+
+{% block title %}Clearance expired · SimFlow{% endblock title %}
+
+{% block content %}
+<div class="auth-main">
+
+    <div class="proc-header">
+        <div class="proc-phase">403</div>
+        <h1 class="proc-title">Clearance expired</h1>
+    </div>
+
+    <div class="auth-shell">
+        <div class="auth-card">
+            <div class="auth-card-section">
+                <p class="auth-notice">
+                    That form was open too long and its clearance lapsed before
+                    it was submitted. Nothing was saved. Sign in again and the
+                    request will be re-cleared.
+                </p>
+                <a class="auth-btn auth-btn--outline"
+                   href="{% url 'login' %}">← Back to sign in</a>
+            </div>
+        </div>
+    </div>
+
+</div>
+{% endblock content %}

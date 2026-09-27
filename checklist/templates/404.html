@@ -1,0 +1,43 @@
+{% extends "checklist/base.html" %}
+{% comment %}
+404 — page not found.
+
+Lives at the app template root, not under templates/checklist/, because Django
+resolves the bare name "404.html".
+
+Safe to extend base.html: django.views.defaults.page_not_found renders with
+`template.render(context, request)`, so the request is passed and the context
+processors run — `sop`, `user` and `request.session` all resolve normally.
+500.html has no such luxury; see the comment there before making these two
+look alike.
+
+The requested path is deliberately not echoed. Django only shows it under
+DEBUG, it tells the pilot nothing, and reflecting attacker-chosen text into a
+page is a habit worth not having even where autoescaping makes it safe.
+{% endcomment %}
+
+{% block title %}Off the charts · SimFlow{% endblock title %}
+
+{% block content %}
+<div class="auth-main">
+
+    <div class="proc-header">
+        <div class="proc-phase">404</div>
+        <h1 class="proc-title">Off the charts</h1>
+    </div>
+
+    <div class="auth-shell">
+        <div class="auth-card">
+            <div class="auth-card-section">
+                <p class="auth-notice">
+                    That waypoint isn’t in the database. The link may be out of
+                    date, or the address mistyped.
+                </p>
+                <a class="auth-btn auth-btn--outline"
+                   href="{% url 'checklist:start' %}">← Return to field</a>
+            </div>
+        </div>
+    </div>
+
+</div>
+{% endblock content %}
