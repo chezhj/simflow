@@ -1,3 +1,19 @@
+## v2.9.0 (2026-09-27)
+
+### Feat
+
+- **deploy**: keep logs across deploys, and plan out 5.1 and 5.7
+- **plugin**: add xFlow/net_probe to decompose the round trip
+
+### Fix
+
+- **plugin**: correct the mechanism named for the per-connection cost
+- **probe**: surface status codes, because a 404 times the wrong thing
+
+### Perf
+
+- **plugin**: pool the HTTP connection instead of rebuilding TLS per call
+
 ## v2.8.1 (2026-09-23)
 
 ### Fix
