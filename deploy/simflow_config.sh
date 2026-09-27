@@ -22,8 +22,16 @@ DATABASE_ENGINE="sqlite"                    # sqlite | mysql
 DATABASE_SOURCE="production"                # production | repository
 
 # No media/uploads in this app - db.sqlite3 and .env are symlinked from
-# shared/<app>/ automatically, so no extra shared paths are needed.
-SHARED_PATHS=()
+# shared/<app>/ automatically.
+#
+# logs/ is here because settings/prod.py puts it at BASE_DIR/"logs", and
+# BASE_DIR is the release directory. Without this entry every deploy starts a
+# new empty logs/ and the previous release's django.log goes with the old
+# release tree - so the first thing wanted after an incident, the log from
+# before the fix shipped, was the one thing gone. The plugin's per-session
+# logs/session_<id>.jsonl files live in the same directory and were lost the
+# same way.
+SHARED_PATHS=("logs")
 
 # Checklist content is deployed together with the app: after migrate, upsert the
 # content tables (SOP, Attribute, Procedure, CheckItem) from the fixture shipped

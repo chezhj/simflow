@@ -637,40 +637,84 @@ None of these are launch blockers, but all of them bite within the first weeks.
 
 ---
 
-### [ ] 5.1 **[code + server]** Session table cleanup
+### [ ] 5.1 **[decide + code]** Session table cleanup — cron vs trigger
 
-**Confirmed**: no `SESSION_ENGINE` is set anywhere in `settings/`, so Django's
-default `django.contrib.sessions.backends.db` is in use and every session is a
-row in `django_session`. The app writes to the session on the profile page
-(`attrib`, `dual_mode`, `pilot_role`, the `sb_*` SimBrief fields), so an
-anonymous visitor who touches the profile page leaves a row. Expiry is logical
-only: the row survives its own `expire_date` until something deletes it, and
-`clearsessions` is called nowhere in the repo.
+**Confirmed**: no `SESSION_ENGINE` is set, so Django's default
+`django.contrib.sessions.backends.db` is in use and every session is a row in
+`django_session`. The app writes to the session on the profile page (`attrib`,
+`dual_mode`, `pilot_role`, the `sb_*` SimBrief fields), so an anonymous
+visitor who touches it leaves a row. Expiry is logical only: the row outlives
+its own `expire_date` until something deletes it, and `clearsessions` is called
+nowhere in the repo.
 
-**Change**: run `manage.py clearsessions` daily. Two ways, and they are not
-equivalent:
+#### The proposal — "on starting a flight, keep the last 4" — and which table it fits
 
-| | runs | verdict |
+It is a good design, but it belongs to **5.2, not here.** The two tables have
+different populations:
+
+| | `django_session` (5.1) | `FlightSession` (5.2) |
 |---|---|---|
-| cPanel cron entry, daily | every day | **preferred** — bounded growth regardless of release cadence |
-| append to `POST_MIGRATE_COMMANDS` | only on deploy | weaker, but zero new infrastructure |
+| written by | every visitor who loads the profile page | only a pilot who clicks Start Checklist |
+| row cost | ~400 bytes | ~170 rows: 1 + **19** eager `FlightSessionAttribute` (one per Attribute) + up to 363 lazy `FlightItemState`, plus a `last_datarefs` JSON blob |
+| keyed per user | no — anonymous visitors included | yes, via `user_profile` |
 
-The cron command needs the virtualenv and the settings module, both already
-named in `deploy/simflow_config.sh`:
+**A flight-start trigger cannot clean `django_session`**, because the rows that
+accumulate come from people who never start a flight. It cleans the table that
+is not the problem and misses the one that is. For `FlightSession` the same
+trigger fits exactly: it fires when a row is created, and "keep the last 4 per
+user" gives a hard cap of 4 × users.
 
-```bash
-source /home/vdwanet/virtualenv/domains/simflow.vdwaal.net/3.11/bin/activate && \
-  cd ~/domains/simflow.vdwaal.net && \
-  DJANGO_SETTINGS_MODULE=smart_training_checklist.settings.prod \
-  python manage.py clearsessions
-```
+#### Trigger, for `FlightSession` — pros and cons
 
-**[decide]** cron or deploy-hook. I would do both: the cron for the steady
-state, the deploy hook so a fresh release starts clean.
+**Pros**
+- No cron. Nothing to configure in cPanel, nothing invisible to the repo,
+  nothing to recreate after a host migration.
+- In version control, reviewable and unit-testable.
+- Work is proportional to use, and the bound is per user rather than global —
+  at 50 pilots that is ≤200 sessions and ~34,000 child rows, predictable.
 
-**Verify**: `SELECT count(*) FROM django_session;` before and after.
+**Cons**
+- It is a **write inside a user-facing action**. Steady state deletes roughly
+  one old session per new one: ~170 row deletes across three tables during
+  Start Checklist. Fast in absolute terms on SQLite, but SQLite serialises
+  writers across Passenger workers, so it widens the write-lock window on a
+  request a pilot is waiting on. This is the one real objection, and it is the
+  same concern behind 4.1.
+- **Anonymous flight sessions are never reached.** `user_profile` is
+  `null=True` with `on_delete=SET_NULL`, so a session with no profile — or one
+  orphaned by a deleted account — has no "per user" bucket and lives forever.
+  A trigger-only scheme needs a second sweep for those.
+- **Dormant users keep their last 4 forever.** Bounded, so arguably fine, but
+  it is retention by count rather than by age: a pilot who stops flying keeps
+  data indefinitely, which matters more for a privacy answer than for disk.
+- A failure mid-delete must not break Start Checklist, so it needs wrapping —
+  cleanup failing silently is correct here, and that has to be deliberate.
 
----
+**Mitigation for the cost objection**: do the delete *after* the response, or
+cap it (delete at most one stale session per start, so the work per request is
+bounded even if a user has 40 old sessions).
+
+#### So what cleans `django_session`?
+
+Four options that do not need a daily cron:
+
+| option | verdict |
+|---|---|
+| **`SESSION_ENGINE = signed_cookies`** — no table at all | Tempting: the payload is small (≤19 ints plus a few short strings) and fits a 4 KB cookie easily. **But** sessions become unrevocable — a copied cookie stays valid until expiry and logout cannot kill it, and a user can replay an old cookie to revert state. A security regression right after Phase 1 hardened this area. |
+| **`clearsessions` in `POST_MIGRATE_COMMANDS`** | Zero infrastructure, already a supported hook, runs at every deploy. Bounds the table to roughly one release cycle's visitors. |
+| **probabilistic sweep** — 1 request in N deletes ≤K expired rows | No cron, covers anonymous rows, but puts an unpredictable write on a random visitor's request; same SQLite lock concern as above. |
+| **daily cPanel cron** | Tightest bound, but configured outside the repo and invisible to it. |
+
+**Scale check before choosing.** A `django_session` row is ~400 bytes;
+10,000 visitors is ~4 MB. That is not a threat to SQLite — the reason to care
+is that it rides in every pre-migrate backup. `FlightSession` and its children
+grow faster: 100 flights a week is ~17,000 child rows a week.
+
+**[decide]**. My recommendation, given the above: `clearsessions` in
+`POST_MIGRATE_COMMANDS` for `django_session` — proportionate to a table that
+is not really the problem, and it costs one line — plus the trigger for
+`FlightSession` under 5.2, capped at one deletion per start, with an
+age-based sweep for the anonymous and orphaned rows the trigger cannot see.
 
 ### [ ] 5.2 **[code]** Retention for `FlightSession` and its children
 
@@ -764,33 +808,69 @@ easily — check `AXES_LOCKOUT_PARAMETERS` before shipping.
 
 ---
 
-### [ ] 5.5 **[code + server]** Stop discarding `logs/` on every deploy
+### [x] 5.5 **[done]** Stop discarding `logs/` on every deploy
 
-Not in the original outline; found while checking 5.2. `logs/django.log` —
-`django.request` errors at ERROR and everything from `checklist` at INFO — is
-written inside the release directory and is **not** in `SHARED_PATHS`, so each
-deploy starts a new empty one and the previous release's history goes with the
-old release tree. The same is true of `logs/session_<id>.jsonl`.
+`logs/django.log` — `django.request` errors at ERROR and everything from
+`checklist` at INFO — was written inside the release directory and was not in
+`SHARED_PATHS`, so each deploy started a new empty one and the previous
+release's history went with the old release tree. The same for
+`logs/session_<id>.jsonl`. That undercut the Phase 1 logging work: the first
+thing wanted after an incident is the log from *before* the fix was deployed.
 
-That undercuts the Phase 1 logging work: the first thing wanted after an
-incident is the log from before the fix was deployed.
-
-**Change**: add `logs` to `SHARED_PATHS` in `deploy/simflow_config.sh` so
+**Done**: `SHARED_PATHS=("logs")` in `deploy/simflow_config.sh`, so
 `activate.sh` symlinks `~/domains/shared/simflow/logs` into each release.
 
-**Check first** — I have not verified either of these and both must hold
-before this ships:
-1. That `activate.sh` in the installed `www_installer` creates a shared path
-   that does not yet exist, rather than failing.
-2. That the directory is writable by the Passenger user, since
-   `settings/prod.py:75` calls `_LOG_DIR.mkdir(exist_ok=True)` at import time
-   — through a symlink to a read-only target that raises during startup.
+The two preconditions were confirmed by the operator rather than by me:
+`activate.sh` creates a shared path that does not yet exist, and the directory
+is writable by the Passenger user (media lives in the same place for other
+apps on this host). `settings/prod.py:75` calls `_LOG_DIR.mkdir(exist_ok=True)`
+at import time, so a *dangling* symlink would raise `FileExistsError` during
+startup and take the site down — `exist_ok` only suppresses when the path is
+already a directory. Worth knowing if the shared directory is ever moved.
 
-Once logs persist, 5.2's retention needs to cover the `.jsonl` files too,
-because they stop being bounded by the release. Sequence 5.5 before 5.2's
-final shape, or the prune command gets written against the wrong assumption.
+**Consequence for 5.2**: the `.jsonl` files are now genuinely unbounded rather
+than bounded by the release, so retention has to cover them. Factored in below.
 
----
+**Verify after the next deploy**: `ls -l <release>/logs` shows a symlink, and
+`django.log` still holds entries written before that deploy.
+
+### [ ] 5.7 **[code]** Derive the plugin compatibility window instead of configuring it
+
+**Decided 2026-09-27**: `PLUGIN_MIN_VERSION` and `PLUGIN_WARN_BELOW` should go
+away. The rule becomes semantic rather than configured:
+
+- **major mismatch → blocked** (the wire protocol changed)
+- **minor mismatch → warn** (the plugin still works, but is behind)
+- patch difference → ok
+
+That is a better rule than the sliding window, for a reason this release
+demonstrated: the window has to be hand-slid in lockstep with every plugin
+release, and doing it in the wrong order ships an app that warns about the
+plugin shipped beside it. `TestTheRealWindowIsSane` now catches that, but not
+needing to remember it at all is better.
+
+**The one thing to resolve**: "mismatch" needs something to compare against —
+the current plugin version, which today only exists as `PLUGIN_VERSION` in
+`xplane_plugin/xFlow/PI_xFlow.py`. Options:
+
+| source | notes |
+|---|---|
+| parse `PI_xFlow.py` at startup | single source of truth, no duplication; couples app startup to a file in the plugin tree, which does ship in the release |
+| a `CURRENT_PLUGIN_VERSION` setting written by `bump_plugin.py` | no runtime parsing, but re-introduces a constant — one, derived automatically, instead of two maintained by hand |
+| read from the plugin CHANGELOG's top entry | same coupling, looser format |
+
+Parsing `PI_xFlow.py` is the closest to "no constants", and
+`TestTheRealWindowIsSane.test_the_blocked_band_does_not_reach_the_current_release`
+already does exactly that parse, so the regex is written and tested.
+
+`plugin_status_for_version` keeps its current contract — `'ok' | 'warn' |
+'blocked'`, with an unreadable version classified `warn` rather than `blocked`
+— so nothing downstream changes. The tests in
+`checklist/tests/test_plugin_version_notice.py` pin the behaviour and should
+be rewritten against version *pairs* rather than absolute tuples.
+
+**Until this ships**, the window is slid by hand at each plugin release, one
+minor at a time, per the policy comment in `settings/base.py`.
 
 ### [ ] 5.6 **[code]** Bound `_last_gate_item`
 
@@ -807,13 +887,17 @@ inactive, or replace the dict with a bounded mapping.
 
 ### 🚦 Gate 5
 
-**Decisions needed before any of this is written**: 5.1 cron vs deploy-hook,
-5.2 retention window and whether to null `last_datarefs` separately, 5.4 which
-limiter. 5.3, 5.5 and 5.6 need no decision.
+**Done**: 5.5.
 
-**Suggested order**: 5.5 first (it changes what 5.2 must handle), then 5.1 and
-5.3 (small, independent), then 5.2, then 5.4. 5.6 rides along with whichever
-change opens `plugin_views.py`.
+**Decisions still needed**: 5.1 which `django_session` strategy, 5.2 the
+retention window and whether the trigger is capped at one deletion per start,
+5.4 which limiter. 5.3, 5.6 and 5.7 need no decision.
+
+**Suggested order**: 5.1 and 5.3 (small, independent), then 5.2 — 5.1's
+decision shapes 5.2, since the flight-start trigger discussed there is the
+same mechanism — then 5.4. 5.6 rides along with whichever change opens
+`plugin_views.py`. 5.7 is independent of all of them and can wait for a quiet
+moment after the release.
 
 ---
 
