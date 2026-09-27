@@ -58,8 +58,17 @@ def main() -> int:
     # Work on a throwaway duplicate as well. --dry-run already writes nothing,
     # but the cost of being wrong about that is someone's flight history, and
     # a temp copy makes the question moot.
-    with tempfile.TemporaryDirectory() as tmp:
-        scratch = Path(tmp) / "inspect.sqlite3"
+    #
+    # Not TemporaryDirectory(): its cleanup raises PermissionError on Windows
+    # if anything still holds the file open, and Django's SQLite connection
+    # does. POSIX allows unlinking an open file, so this only ever showed up
+    # on Windows — as a traceback AFTER the report had already printed, which
+    # is a confusing way to be told the run succeeded. Closing the connection
+    # is the real fix; ignore_errors is there so a stray handle can never turn
+    # a successful inspection into a failure.
+    tmp = Path(tempfile.mkdtemp(prefix="simflow-prune-"))
+    try:
+        scratch = tmp / "inspect.sqlite3"
         shutil.copy2(source, scratch)
 
         sys.path.insert(0, str(REPO_ROOT))
@@ -93,6 +102,14 @@ def main() -> int:
 
         print()
         print("Nothing was written, to the copy or to production.")
+    finally:
+        try:
+            from django.db import connections
+
+            connections.close_all()
+        except Exception:  # noqa: BLE001 — cleanup must not mask the report
+            pass
+        shutil.rmtree(tmp, ignore_errors=True)
     return 0
 
 
