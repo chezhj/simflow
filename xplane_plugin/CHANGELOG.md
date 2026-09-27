@@ -1,5 +1,10 @@
 # xFlow Plugin Changelog
 
+## [1.2.0] — 2026-09-27
+
+### Changed
+- changed reuese of connection and threading model
+
 ## [1.1.2] — 2026-09-23
 
 ### Changed
