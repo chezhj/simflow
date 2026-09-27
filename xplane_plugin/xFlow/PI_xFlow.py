@@ -28,6 +28,7 @@ Commands registered:
   xFlow/check_next_item  — manually check the next checklist item
   xFlow/dump_watch       — log current watch list and dataref values (INFO)
   xFlow/report_miss      — report the first unchecked item as a rule miss
+  xFlow/net_probe        — time DNS / TCP / TLS / HTTP to the backend (INFO)
   Bind via X-Plane Settings → Keyboard or Joystick.
 """
 
@@ -37,9 +38,12 @@ import configparser
 import json
 import queue
 import re
+import socket
+import ssl
 import threading
 import time
 import urllib.error
+import urllib.parse
 import urllib.request
 from pathlib import Path
 
@@ -59,7 +63,7 @@ except ImportError:
 
 # ── Plugin identity & version ──────────────────────────────────────────────── #
 
-PLUGIN_VERSION = "1.1.0"
+PLUGIN_VERSION = "1.1.2"
 
 plugin_name = "xFlow"
 plugin_sig = "xppython3.xflow"
@@ -75,6 +79,15 @@ _DUMP_COMMAND_DESC = "xFlow – Dump watch list and current dataref values to lo
 
 _MISS_COMMAND_FULL = "xFlow/report_miss"
 _MISS_COMMAND_DESC = "xFlow – Report rule miss for the first unchecked checklist item"
+
+_PROBE_COMMAND_FULL = "xFlow/net_probe"
+_PROBE_COMMAND_DESC = "xFlow – Time DNS, TCP, TLS and HTTP to the backend"
+
+# Samples per stage in the net probe. Five is enough to separate a hard floor
+# from a one-off stall without holding the worker thread for long: the whole
+# probe is bounded by 5 x 4 stages x the 5 s socket timeout in the worst case,
+# and takes about two seconds when the backend is healthy.
+_PROBE_SAMPLES = 5
 
 # ── Flight loop interval ───────────────────────────────────────────────────── #
 
@@ -204,6 +217,13 @@ class PythonInterface:
         self._miss_cmd = CheckCommand(
             _MISS_COMMAND_FULL, _MISS_COMMAND_DESC, self._on_report_miss
         )
+        self._probe_cmd = CheckCommand(
+            _PROBE_COMMAND_FULL, _PROBE_COMMAND_DESC, self._on_net_probe
+        )
+
+        # Pooled HTTP connection, built on first use by _http_session() and
+        # dropped on disable. Touched only by the HTTP worker thread.
+        self._http_pool = None
 
         # Session state — populated by _fetch_session()
         self._session_id: int | None = None
@@ -403,10 +423,16 @@ class PythonInterface:
                 pass
             worker.join(timeout=_WORKER_JOIN_TIMEOUT)
 
+        # After the worker has stopped, so nothing is mid-request. A new
+        # session is built lazily on the next enable; keeping this one would
+        # hold a connection open across a disable for no benefit.
+        self._close_http_session()
+
     def XPluginStop(self):
         self._check_cmd.destroy()
         self._dump_cmd.destroy()
         self._miss_cmd.destroy()
+        self._probe_cmd.destroy()
 
     # ── Flight loop ────────────────────────────────────────────────────────── #
 
@@ -580,6 +606,189 @@ class PythonInterface:
         if phase != 0:
             return
         self._submit(self._post_report_miss)
+
+    def _on_net_probe(self, phase: int):
+        if phase != 0:
+            return
+        if not self._submit(self._run_net_probe):
+            self._log("WARNING", "net probe not started — HTTP backlog full")
+
+    # ── Network probe ──────────────────────────────────────────────────────── #
+
+    @staticmethod
+    def _timed(fn):
+        """Run fn, returning (milliseconds, result_or_exception, ok)."""
+        started = time.monotonic()
+        try:
+            result = fn()
+        except Exception as exc:
+            return (time.monotonic() - started) * 1000, exc, False
+        return (time.monotonic() - started) * 1000, result, True
+
+    def _probe_stage(self, label: str, fn) -> list[float]:
+        """
+        Run fn _PROBE_SAMPLES times, log min/median, return the samples.
+
+        Reports min as well as median because the two answer different
+        questions: a high median with a low min is congestion, while a high
+        min is a cost every call pays and is the thing worth fixing.
+        """
+        samples: list[float] = []
+        first_error = ""
+        for _ in range(_PROBE_SAMPLES):
+            ms, result, ok = self._timed(fn)
+            if ok:
+                samples.append(ms)
+            elif not first_error:
+                first_error = _short_error(result)
+        if not samples:
+            self._log("INFO", f"  {label:<26} FAILED  {first_error}")
+            return samples
+        ordered = sorted(samples)
+        median = ordered[len(ordered) // 2]
+        note = f"  ({len(samples)}/{_PROBE_SAMPLES} ok)" if first_error else ""
+        self._log(
+            "INFO",
+            f"  {label:<26} min {min(ordered):6.0f} ms   median {median:6.0f} ms{note}",
+        )
+        return samples
+
+    def _run_net_probe(self) -> None:
+        """
+        Decompose the round trip to the backend, from inside X-Plane's process.
+
+        Runs on the HTTP worker thread, so it never touches a frame — but it
+        does hold that thread for a second or two, during which state posts
+        are coalesced away. That is why it is a manual command and not
+        something the plugin does on its own.
+
+        The point is to separate three explanations for a slow round trip that
+        the plugin's own "state response in N ms" line cannot tell apart:
+        name resolution, connection setup (TCP + TLS), and the server. The
+        same endpoints timed from a desktop machine by scripts/probe_server.py
+        give the number to compare against.
+        """
+        url = self._backend_url.rstrip("/")
+        parts = urllib.parse.urlsplit(url)
+        host = parts.hostname or ""
+        secure = parts.scheme == "https"
+        port = parts.port or (443 if secure else 80)
+
+        if not host:
+            self._log("ERROR", f"net probe: cannot parse backend_url {url!r}")
+            return
+
+        self._log("INFO", f"=== net probe: {host}:{port} "
+                          f"({_PROBE_SAMPLES} samples per stage) ===")
+        self._log("INFO", f"  transport: {'requests' if _USE_REQUESTS else 'urllib'}")
+
+        def resolve():
+            return socket.getaddrinfo(host, port, type=socket.SOCK_STREAM)
+
+        self._probe_stage("DNS resolve", resolve)
+
+        # Resolve once outside the connect timing so the TCP number is the
+        # handshake alone — socket.create_connection would resolve again and
+        # fold name lookup back into the figure we are trying to isolate.
+        try:
+            addr = resolve()[0]
+        except Exception as exc:
+            self._log("ERROR", f"  cannot resolve {host}: {_short_error(exc)}")
+            return
+        family, socktype, proto, _canon, sockaddr = addr
+
+        def tcp_connect():
+            sock = socket.socket(family, socktype, proto)
+            sock.settimeout(5)
+            try:
+                sock.connect(sockaddr)
+            finally:
+                sock.close()
+
+        if not self._probe_stage("TCP connect", tcp_connect):
+            # Nothing below can succeed if the socket will not open, and each
+            # remaining stage would spend five samples waiting out a timeout.
+            self._log("INFO", "=== net probe abandoned: cannot open a socket ===")
+            return
+
+        if secure:
+            # Timed on its own because it was the prime suspect for the
+            # several hundred milliseconds requests spent per connection. It
+            # is not: it measures ~31 ms on the sim PC. Kept because ruling a
+            # cause out is worth the five samples.
+            self._probe_stage("SSL context create (no net)",
+                              ssl.create_default_context)
+
+            context = ssl.create_default_context()
+
+            def tls_handshake():
+                sock = socket.socket(family, socktype, proto)
+                sock.settimeout(5)
+                try:
+                    sock.connect(sockaddr)
+                    with context.wrap_socket(sock, server_hostname=host):
+                        pass
+                finally:
+                    sock.close()
+
+            # Includes the TCP connect above; subtract that median to get the
+            # handshake on its own. The context is built once, outside the
+            # timing — which is exactly what a pooled session does and what
+            # module-level requests.get() does not.
+            if not self._probe_stage("TCP + TLS (shared ctx)", tls_handshake):
+                self._log("INFO", "=== net probe abandoned: TLS handshake failed ===")
+                return
+
+        # The old path: a Session, pool and SSLContext per call. Kept as a
+        # stage so the pooled figure below has something to be measured
+        # against on the machine actually running it.
+        self._probe_stage(
+            "GET /  unpooled (old path)",
+            lambda: self._probe_fresh_get(url + "/", {}),
+        )
+
+        try:
+            pool = self._http_session()
+            if pool is not None:
+                pool.get(url + "/", timeout=5)  # warm the pool, not timed
+            self._probe_stage(
+                "GET /  pooled (current)",
+                lambda: self._http_get(url + "/", {}),
+            )
+        except Exception as exc:
+            self._log("INFO", f"  pooled probe failed: {_classify_error(exc)}")
+
+        if self._api_key and self._api_key != PLACEHOLDER:
+            headers = {
+                "Authorization": f"Bearer {self._api_key}",
+                "X-Plugin-Version": PLUGIN_VERSION,
+            }
+            self._probe_stage(
+                "GET /api/plugin/session/ pooled",
+                lambda: self._http_get(url + "/api/plugin/session/", headers),
+            )
+        else:
+            self._log("INFO", "  (no api_key set — skipping the authenticated call)")
+
+        self._log("INFO", "=== net probe done ===")
+
+    @staticmethod
+    def _probe_fresh_get(url: str, headers: dict):
+        """
+        A GET that deliberately opens its own connection, bypassing the pool.
+
+        Only the probe uses this. It is what the plugin did before pooling, so
+        keeping it is the only way to show, on the sim PC, what pooling bought.
+        """
+        if _USE_REQUESTS:
+            return requests.get(url, headers=headers, timeout=5)
+        req = urllib.request.Request(url, method="GET", headers=headers)
+        try:
+            with urllib.request.urlopen(req, timeout=5) as resp:
+                resp.read()
+                return resp.status
+        except urllib.error.HTTPError as exc:
+            return exc.code
 
     # ── HTTP workers (daemon threads) ──────────────────────────────────────── #
 
@@ -806,11 +1015,68 @@ class PythonInterface:
 
     # ── HTTP primitives ────────────────────────────────────────────────────── #
 
-    @staticmethod
-    def _http_get(url: str, headers: dict) -> tuple[int, dict]:
+    def _http_session(self):
+        """
+        The shared requests.Session, created on first use.
+
+        Measured on the sim PC with xFlow/net_probe. requests.get() at module
+        level builds a new Session, pool and connection for every call, and
+        that setup cost 438-454 ms while DNS, TCP, the TLS handshake and
+        SSLContext creation together accounted for only 109-126 ms of it. The
+        remaining ~340 ms moves no packets and is unidentified; the likeliest
+        candidate is urllib3 loading certifi's CA bundle — a ~290 KB PEM
+        parsed per connection, which the probe's SSLContext stage does not
+        cover because ssl.create_default_context() reads the OS trust store
+        instead. Pooling makes the question moot: whatever it is, it is paid
+        once per session rather than twice a second.
+
+        Effect on the sim PC, same probe: 563-594 ms unpooled against
+        125-140 ms pooled.
+
+        Only the HTTP worker thread calls this, so it needs no lock.
+        """
+        if not _USE_REQUESTS:
+            return None
+        if self._http_pool is None:
+            self._http_pool = requests.Session()
+            # requests defaults to max_retries=0. The plugin polls every half
+            # second, so the connection is normally too busy to go stale — but
+            # it does idle out during an error backoff or between flights, and
+            # without a retry the first call afterwards fails and triggers a
+            # 10 s backoff of its own. One connect retry absorbs that.
+            try:
+                adapter = requests.adapters.HTTPAdapter(
+                    pool_connections=1,
+                    pool_maxsize=2,
+                    max_retries=requests.adapters.Retry(
+                        total=None, connect=1, read=0, status=0,
+                        redirect=0, other=0,
+                    ),
+                )
+            except Exception:
+                # An older requests without Retry re-exported: pooling is the
+                # part worth having, so keep it and go without the retry.
+                adapter = requests.adapters.HTTPAdapter(
+                    pool_connections=1, pool_maxsize=2
+                )
+            self._http_pool.mount("https://", adapter)
+            self._http_pool.mount("http://", adapter)
+        return self._http_pool
+
+    def _close_http_session(self) -> None:
+        """Drop the pooled connection. Safe to call when none was opened."""
+        session, self._http_pool = self._http_pool, None
+        if session is not None:
+            try:
+                session.close()
+            except Exception:
+                pass
+
+    def _http_get(self, url: str, headers: dict) -> tuple[int, dict]:
         """GET url. Returns (status_code, parsed_json_body)."""
-        if _USE_REQUESTS:
-            resp = requests.get(url, headers=headers, timeout=5)
+        session = self._http_session()
+        if session is not None:
+            resp = session.get(url, headers=headers, timeout=5)
             try:
                 body = resp.json()
             except Exception:
@@ -829,15 +1095,15 @@ class PythonInterface:
         except urllib.error.HTTPError as exc:
             return exc.code, {}
 
-    @staticmethod
-    def _http_post_json(url: str, headers: dict, body) -> tuple[int, dict]:
+    def _http_post_json(self, url: str, headers: dict, body) -> tuple[int, dict]:
         """
         POST url with optional JSON body.
         Returns (status_code, parsed_json_body).
         Raises on network/timeout errors.
         """
-        if _USE_REQUESTS:
-            resp = requests.post(url, headers=headers, json=body, timeout=5)
+        session = self._http_session()
+        if session is not None:
+            resp = session.post(url, headers=headers, json=body, timeout=5)
             try:
                 data = resp.json()
             except Exception:
@@ -861,6 +1127,18 @@ class PythonInterface:
 
 
 # ── Error classifier (module-level, no state needed) ──────────────────────── #
+
+
+def _short_error(exc: Exception) -> str:
+    """
+    One bounded line for a log: type plus message, truncated.
+
+    requests wraps a refused connection in a urllib3 message several lines
+    long. The useful part is the front, and an unbounded line in Log.txt is
+    worse than a clipped one.
+    """
+    detail = f"{type(exc).__name__}: {exc}"
+    return detail[:120] + ("…" if len(detail) > 120 else "")
 
 
 def _classify_error(exc: Exception) -> str:

@@ -438,11 +438,38 @@ Latency measurably improved, all tests green, plugin still behaves in the sim.
 **If 0.1 said NFS, this phase is replaced by a MySQL migration** and everything
 below is void. Otherwise:
 
-### [ ] 4.1 **[code]** SQLite WAL, IMMEDIATE transactions, busy timeout
+> **Measured 2026-09-24 — the latency case for this phase is dead.**
+> `scripts/probe_server.py`, run four times from the dev machine against
+> production with an active session and the server's own 63-dataref watch list:
+>
+> | endpoint | work done | median |
+> |---|---|---|
+> | `GET /` | read-only, no auth | 62–70 ms |
+> | `GET /api/plugin/session/` | 3 queries, 1 write | 68–79 ms |
+> | `POST /api/plugin/state/` | 15 queries, 1 write, rule evaluation | **93–100 ms** |
+>
+> All samples returned 200. The write costs 5–10 ms and the whole endpoint
+> costs ~30 ms above a static page, so **the 593 ms floor in the flight log is
+> not the database and not the server**. fsync-per-commit was the hypothesis
+> WAL was meant to fix; it is disproved. Connection setup, by contrast, is
+> real: a fresh connection costs 39–58 ms against 19–27 ms for a reused one,
+> and the plugin opens a fresh one every call.
+>
+> The remaining ~500 ms is on the sim side. `xFlow/net_probe` (plugin ≥ next
+> release) decomposes it from inside X-Plane's process — see 4.3.
+
+### [ ] 4.1 **[code]** SQLite IMMEDIATE transactions, busy timeout — WAL optional
 
 ~~Blocked until 0.2 confirms the backup is WAL-safe.~~ **Unblocked**: the
 backup and restore are WAL-safe since www_installer v1.3.0. Make sure the server's
 `~/deploy-tools` is on v1.3.0 or later before the release that turns WAL on.
+
+**Re-scoped after the measurement above.** `transaction_mode` and `timeout`
+still earn their place: they are about multiple Passenger workers colliding on
+writes, which the probe did not test and which shows up as "database is locked"
+rather than as latency. WAL is now a nice-to-have for reader/writer
+concurrency, not a fix for a problem we have observed — decide it on its own
+merits, not on the 593 ms.
 
 ```python
 "OPTIONS": {
@@ -455,8 +482,8 @@ backup and restore are WAL-safe since www_installer v1.3.0. Make sure the server
 Django 5.1+ supports `init_command` and `transaction_mode` natively, and you are
 on 5.2.1. `IMMEDIATE` is the one that matters most under Passenger: multiple
 worker processes on deferred transactions is the classic route to "database is
-locked" even at low load. WAL also stops readers blocking writers, which is what
-lets 3.2's doubled poll rate stay free.
+locked" even at low load. WAL also stops readers blocking writers — worth having
+at 50 users, but no longer the load-bearing reason for this phase.
 
 ### [ ] 4.2 **[verify]** Confirm WAL is live and the backup round-trips
 
@@ -477,6 +504,110 @@ sqlite3 "$b" 'SELECT max(id) FROM checklist_flightsession;'  # compare with the 
 The restore path does not need testing against the live app. www_installer's
 `tests/sqlite_backup_test.sh` covers it: a stale `-wal`, a refused safety copy, and
 `--force-restore`.
+
+### [x] 4.3 **[done]** Sim-side 500 ms found: a new TLS context per request
+
+`xFlow/net_probe`, run twice on the sim PC against production:
+
+| stage | median | note |
+|---|---|---|
+| DNS resolve | 15 ms | |
+| TCP connect | 32 ms | RTT ~3x the dev machine's |
+| TCP + TLS handshake (raw socket, shared context) | 94 ms | so TLS itself ≈ 62 ms |
+| `GET /` fresh connection via `requests` | **579 ms** | |
+| `GET /` reused connection | **110 ms** | |
+
+The arithmetic is the finding. `requests` spent 579 − 110 = **469 ms** setting up
+a connection that raw sockets set up in **94 ms**. The 375 ms difference moves no
+packets: the raw-socket stage built its `SSLContext` once, outside the timing,
+while `requests.get()` at module level builds a new `Session`, pool and
+`SSLContext` for every call.
+
+> **Correction, measured after the fix.** `SSLContext` creation was the named
+> suspect and it is *not* the cost: a dedicated probe stage puts it at **31 ms**.
+> Across three runs, `requests`' per-connection setup was 438–454 ms while DNS,
+> TCP, the TLS handshake and context creation together accounted for only
+> 109–126 ms. **~340 ms remains unidentified.** The likeliest remaining candidate
+> is urllib3 loading certifi's CA bundle — a ~290 KB PEM parsed per connection,
+> which the context stage does not cover because `ssl.create_default_context()`
+> reads the OS trust store rather than certifi's file. Unverified.
+>
+> The diagnosis (per-call connection setup) and the fix (pool it) were right;
+> the mechanism named for it was wrong. Pooling makes it moot — whatever the
+> 340 ms is, it is now paid once per session instead of twice a second.
+
+**Fix**: one pooled `requests.Session`, built on first use and closed on
+disable (`_http_session`). Verified against a real socket, not mocks: 10 GETs
+and 10 POSTs now share **one** TCP connection where the old path opened ten,
+and a connection dropped by the server is recovered rather than raising.
+
+**Confirmed on the sim PC**, three runs of the probe carrying both paths:
+
+| | median |
+|---|---|
+| `GET /` unpooled (old path) | 563–594 ms |
+| `GET /` pooled (current) | **125–140 ms** |
+| `GET /api/plugin/session/` pooled | 125–156 ms |
+
+**4.4× faster**, comfortably inside the 500 ms tick.
+
+The adapter carries one `connect` retry. The plugin polls every 500 ms so the
+connection is rarely idle long enough to go stale, but it does idle out during
+an error backoff — and without the retry the first call afterwards fails and
+starts a 10 s backoff of its own.
+
+Two things deliberately *not* concluded from this: WAL is still not indicated
+(4.1 above), and the remaining gap between the sim PC's 110 ms and the dev
+machine's 20 ms is mostly the 3x RTT, not server work.
+
+### [x] 4.4 **[done]** Re-run `net_probe` on the sim PC after the pooling fix
+
+Done — the figures are in the table above. The pooled line landed where the old
+reused-connection figure predicted.
+
+### [ ] 4.5 **[verify]** Confirm the win in flight, not just in the probe
+
+Fly and read `state response status 200 in N ms` in `XPPython3Log.txt`. That is
+the line that read 593 ms; expect ~125–160 ms. The probe times `GET /`, not the
+state POST with a real payload, so this is the number that actually settles it.
+
+The `HTTP backlog full` warnings should also stop: at a 500 ms tick a 593 ms
+round trip could not keep up, and ~140 ms has room to spare.
+
+### [ ] 4.6 **[release]** Ship the pooling fix as a plugin release
+
+The fix is only on the sim PC as a hand-copied file. It needs a plugin bump and
+release before the announce, or new users get the 593 ms path.
+
+**Optional, not blocking**: the ~340 ms above is unidentified. A probe stage
+timing `load_verify_locations(certifi.where())` would confirm or kill the CA
+bundle theory. Worth knowing, worth nothing to users — pooling already removed
+it from the hot path.
+
+<details>
+<summary>Original 4.3 plan, before the probe answered it</summary>
+
+### Find the sim-side 500 ms with `xFlow/net_probe`
+
+Bind `xFlow/net_probe` to a key in X-Plane (Settings → Keyboard), run it on the
+sim PC with the sim loaded, and read the block it writes to `XPPython3Log.txt`.
+It runs on the HTTP worker thread, so it costs no frames; it times DNS, TCP,
+TLS, `GET /`, `GET /api/plugin/session/` and a reused connection, all from
+inside X-Plane's own interpreter.
+
+Compare against the dev-machine figures in the box above. What each outcome means:
+
+| net_probe shows | conclusion |
+|---|---|
+| DNS in the hundreds of ms | name resolution per call — cache the address, or pool the connection |
+| TCP+TLS in the hundreds of ms | connection setup on that network path — switch to a pooled `requests.Session` |
+| all stages fast, `GET /` still slow | the cost is inside X-Plane's process, not the network |
+| everything fast (~60–100 ms) | the 593 ms was transient, or specific to the state payload |
+
+A pooled `requests.Session` is the likely fix in two of those four rows, and the
+probe already shows it is worth 20–30 ms per call on its own.
+
+</details>
 
 ### 🚦 Gate 4
 
