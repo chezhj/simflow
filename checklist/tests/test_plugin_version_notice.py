@@ -54,14 +54,60 @@ class TestVersionWindow(TestCase):
             with self.subTest(raw=raw):
                 self.assertEqual(plugin_status_for_version(raw or ""), "warn")
 
+
+class TestTheRealWindowIsSane(TestCase):
+    """
+    Deliberately NOT under @override_settings: these assert on the values
+    actually shipped in settings/base.py.
+
+    This class exists because the check it carries used to live inside the
+    overridden class above, where `settings.PLUGIN_MIN_VERSION` resolved to
+    the override rather than the real configuration — so it passed whatever
+    base.py said, which is the one thing it claimed to guard. It only earns
+    its place outside the override.
+    """
+
     def test_the_warn_band_is_not_empty(self):
         """
-        Guards the configuration itself. Setting MIN to the current version
-        would make "blocked" catch everything below it and leave no version
-        that warns — so the warning nobody asked to be a block never fires.
+        Setting MIN to the current version would make "blocked" catch
+        everything below it and leave no version that warns — so the warning
+        nobody asked to be a block never fires.
         """
         from django.conf import settings
         self.assertLess(settings.PLUGIN_MIN_VERSION, settings.PLUGIN_WARN_BELOW)
+
+    def test_the_window_is_a_pair_of_comparable_version_tuples(self):
+        """
+        Both are compared against _parse_version's tuple output. A bare int or
+        a string would compare wrongly or raise at request time, on the plugin
+        hot path, where it is least welcome.
+        """
+        from django.conf import settings
+        for name in ("PLUGIN_MIN_VERSION", "PLUGIN_WARN_BELOW"):
+            value = getattr(settings, name)
+            self.assertIsInstance(value, tuple, f"{name} must be a tuple")
+            self.assertTrue(value, f"{name} must not be empty")
+            for part in value:
+                self.assertIsInstance(part, int, f"{name} parts must be ints")
+
+    def test_the_blocked_band_does_not_reach_the_current_release(self):
+        """
+        Whatever the window is slid to, the version the plugin in this repo
+        reports must itself be 'ok'. Sliding MIN past it would ship a release
+        that blocks itself.
+        """
+        import re
+        from pathlib import Path
+        from django.conf import settings
+
+        plugin = Path(settings.BASE_DIR) / "xplane_plugin" / "xFlow" / "PI_xFlow.py"
+        match = re.search(
+            r'^PLUGIN_VERSION\s*=\s*["\']([^"\']+)["\']',
+            plugin.read_text(encoding="utf-8"),
+            re.MULTILINE,
+        )
+        self.assertIsNotNone(match, "PLUGIN_VERSION not found in the plugin")
+        self.assertEqual(plugin_status_for_version(match.group(1)), "ok")
 
 
 @override_settings(PLUGIN_MIN_VERSION=(1, 0, 2), PLUGIN_WARN_BELOW=(1, 1, 0))
