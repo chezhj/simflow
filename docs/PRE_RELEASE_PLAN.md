@@ -694,27 +694,102 @@ user" gives a hard cap of 4 × users.
 cap it (delete at most one stale session per start, so the work per request is
 bounded even if a user has 40 old sessions).
 
-#### So what cleans `django_session`?
+#### Correction: the trigger *can* clean `django_session`
 
-Four options that do not need a daily cron:
+The objection above — "a flight-start trigger cannot clean `django_session`,
+because the rows come from people who never start a flight" — is **wrong**. It
+conflates *who fires the trigger* with *what the trigger sweeps*. A sweep fired
+on flight start that deletes **every expired row** reaches anonymous visitors'
+rows perfectly well; it just needs somebody to fire it. Only the *per-user*
+part of the proposal ("keep the last 4") fails to carry over, because
+`django_session` rows have no user to bucket by.
 
-| option | verdict |
+What actually differs between the two tables is the **scope** of the delete,
+not whether a trigger can do it:
+
+| table | scope |
 |---|---|
-| **`SESSION_ENGINE = signed_cookies`** — no table at all | Tempting: the payload is small (≤19 ints plus a few short strings) and fits a 4 KB cookie easily. **But** sessions become unrevocable — a copied cookie stays valid until expiry and logout cannot kill it, and a user can replay an old cookie to revert state. A security regression right after Phase 1 hardened this area. |
-| **`clearsessions` in `POST_MIGRATE_COMMANDS`** | Zero infrastructure, already a supported hook, runs at every deploy. Bounds the table to roughly one release cycle's visitors. |
-| **probabilistic sweep** — 1 request in N deletes ≤K expired rows | No cron, covers anonymous rows, but puts an unpredictable write on a random visitor's request; same SQLite lock concern as above. |
-| **daily cPanel cron** | Tightest bound, but configured outside the repo and invisible to it. |
+| `django_session` | global: every row past its `expire_date` |
+| `FlightSession` | per user: all but the most recent N, plus an age sweep for the anonymous and orphaned rows that have no user |
 
-**Scale check before choosing.** A `django_session` row is ~400 bytes;
-10,000 visitors is ~4 MB. That is not a threat to SQLite — the reason to care
-is that it rides in every pre-migrate backup. `FlightSession` and its children
-grow faster: 100 flights a week is ~17,000 child rows a week.
+#### `POST_MIGRATE_COMMANDS` — does it run on every deploy?
 
-**[decide]**. My recommendation, given the above: `clearsessions` in
-`POST_MIGRATE_COMMANDS` for `django_session` — proportionate to a table that
-is not really the problem, and it costs one line — plus the trigger for
-`FlightSession` under 5.2, capped at one deletion per start, with an
-age-based sweep for the anonymous and orphaned rows the trigger cannot see.
+**Yes, for this app** — verified by reading `scripts/activate.sh` in
+`www_installer` at `35d755d`, not inferred from the variable name:
+
+```bash
+run_migrations=0
+if   [ "${DATABASE_ENGINE}" = "mysql" ];  then run_migrations=1
+elif [ "${DATABASE_ENGINE}" = "sqlite" ] && [ "${DATABASE_SOURCE}" = "production" ]
+                                          then run_migrations=1
+fi
+...
+if [ "${run_migrations}" = "1" ]; then
+    python manage.py migrate
+    for cmd in "${POST_MIGRATE_COMMANDS[@]}"; do ...
+```
+
+The gate is **engine and source, never whether migrations are pending**.
+`simflow_config.sh` sets `sqlite` + `production`, so `run_migrations=1` on
+every deploy, `migrate` runs (a no-op when nothing is pending) and the
+post-migrate commands run after it. The name means "after the migrate step",
+not "only if migrations were applied".
+
+Two couplings worth knowing: the same flag gates the pre-migrate database
+backup, and switching `DATABASE_SOURCE` to `repository` would silently stop
+both the backup and the post-migrate commands.
+
+#### But deploy-frequency is the wrong clock
+
+Running cleanup on deploy ties it to **release cadence**, and a year from now
+that could be two releases a year. The tables do not grow on release, they grow
+on use. Cleanup frequency should track time or usage, never how often the
+maintainer ships.
+
+That kills "`POST_MIGRATE_COMMANDS` alone" as the answer. It stays useful as
+belt-and-braces — it is one line and it cleans up after a long quiet spell —
+but it cannot be the only mechanism.
+
+#### Revised recommendation
+
+**One cleanup entry point**, a management command doing all of it: expired
+`django_session` rows (global), `FlightSession` retention (per user, plus an
+age sweep for the orphans), and the `logs/session_<id>.jsonl` files that 5.5
+made persistent.
+
+**Fired on flight-session start, gated to once per 24 h.** That makes the clock
+*usage*, which is the right coupling: the tables only grow when there is use,
+so cleanup only needs to run when there is use. A pilot starting a flight is
+rare enough (a few times a day, not 2 Hz) to carry the cost, and it is already
+inside a write transaction.
+
+The gate needs to be worker-safe — `LocMemCache` is per-process, so a cached
+timestamp would let every Passenger worker run its own daily sweep. Use a
+one-row table and an atomic conditional update, which is lock-free and makes
+the double-fire race impossible:
+
+```python
+claimed = MaintenanceState.objects.filter(
+    pk=1, last_cleanup__lt=now - timedelta(hours=24)
+).update(last_cleanup=now)
+if claimed:      # exactly one worker gets 1; the rest get 0
+    run_cleanup()
+```
+
+Wrap the cleanup so a failure can never break Start Checklist, and cap the work
+per run so one pilot never pays for forty stale sessions at once.
+
+**Keep `POST_MIGRATE_COMMANDS` as well** — free, and it covers the case where
+nobody flies for a month but visitors keep browsing.
+
+**The one gap either way**: browsing traffic with no flying traffic. Visitors
+create `django_session` rows and nothing fires the sweep. Bounded in practice
+(a pilot flies eventually, and ~400 bytes a row means 10,000 visitors is ~4 MB),
+but a daily cron is the only thing that closes it completely. Worth adding
+later if the numbers ever say so; not worth the cPanel dependency now.
+
+**[decide]** the retention numbers: how many flight sessions per user (4 was
+the proposal), and the age cutoff for orphaned ones.
 
 ### [ ] 5.2 **[code]** Retention for `FlightSession` and its children
 
@@ -889,9 +964,11 @@ inactive, or replace the dict with a bounded mapping.
 
 **Done**: 5.5.
 
-**Decisions still needed**: 5.1 which `django_session` strategy, 5.2 the
-retention window and whether the trigger is capped at one deletion per start,
-5.4 which limiter. 5.3, 5.6 and 5.7 need no decision.
+**Decisions still needed**: 5.1/5.2 the retention numbers (how many flight
+sessions per user, and the age cutoff for orphans) — the mechanism itself is
+settled: one command, fired on flight start behind a 24 h atomic gate, with
+`POST_MIGRATE_COMMANDS` as belt-and-braces. 5.4 which limiter. 5.3, 5.6 and
+5.7 need no decision.
 
 **Suggested order**: 5.1 and 5.3 (small, independent), then 5.2 — 5.1's
 decision shapes 5.2, since the flight-start trigger discussed there is the
