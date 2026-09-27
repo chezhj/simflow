@@ -105,7 +105,17 @@ def register_view(request):
             if simbrief_id:
                 user.profile.simbrief_id = simbrief_id
                 user.profile.save()
-            login(request, user)
+            # The backend must be named explicitly. Django can only infer it
+            # when exactly one backend is configured, and AUTHENTICATION_BACKENDS
+            # now holds two (AxesStandaloneBackend ahead of ModelBackend) — so
+            # a bare login() here raises AttributeError: 'User' object has no
+            # attribute 'backend', breaking registration outright.
+            #
+            # ModelBackend is the right one: the user was just created rather
+            # than authenticated, and AxesStandaloneBackend only ever raises
+            # for a locked-out attempt. It never returns a user, so it cannot
+            # be the backend a session was established with.
+            login(request, user, backend="django.contrib.auth.backends.ModelBackend")
             return redirect("checklist:start")
     else:
         form = RegisterForm()

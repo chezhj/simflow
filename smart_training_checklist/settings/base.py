@@ -10,6 +10,7 @@ For the full list of settings and their values, see
 https://docs.djangoproject.com/en/4.1/ref/settings/
 """
 
+from datetime import timedelta
 from pathlib import Path
 from decouple import config
 from .. import __version__
@@ -27,6 +28,7 @@ VERSION = __version__
 INSTALLED_APPS = [
     "checklist.apps.ChecklistConfig",
     "colorfield",
+    "axes",
     "django.contrib.admin",
     "django.contrib.auth",
     "django.contrib.contenttypes",
@@ -43,6 +45,17 @@ MIDDLEWARE = [
     "django.contrib.auth.middleware.AuthenticationMiddleware",
     "django.contrib.messages.middleware.MessageMiddleware",
     "django.middleware.clickjacking.XFrameOptionsMiddleware",
+    # Must be last: it wraps the response and needs every other middleware to
+    # have run first, so the login attempt it inspects is the finished one.
+    "axes.middleware.AxesMiddleware",
+]
+
+# AxesStandaloneBackend must come FIRST. Django tries backends in order and
+# stops at the first that returns a user, so a ModelBackend ahead of it would
+# authenticate a locked-out attacker before axes was ever consulted.
+AUTHENTICATION_BACKENDS = [
+    "axes.backends.AxesStandaloneBackend",
+    "django.contrib.auth.backends.ModelBackend",
 ]
 
 ROOT_URLCONF = "smart_training_checklist.urls"
@@ -129,26 +142,86 @@ MOCK_TOKEN = config("X-Auth-Token", default=None)
 # procedure size and ceiling-tested (test_query_counts.py).
 POLL_INTERVAL_MS = 750
 
+# ── Login throttling (django-axes) ─────────────────────────────────────────── #
+#
+# Nothing throttled /login/, /register/ or /admin/ before this.
+#
+# axes was chosen over django-ratelimit and a hand-rolled middleware for one
+# reason: its default handler is AxesDatabaseHandler, so the counters live in
+# the database. No CACHES is configured here, which means LocMemCache — and
+# that is per-process, so under Passenger every worker would keep its own
+# count and an attacker would get failure_limit x n_workers attempts.
+#
+# Every value below overrides an axes default that is wrong for this app.
+# Leaving any of them out is a bug, not a simplification.
+
+# Locks the PAIR, not either alone. The nested list is AND in axes; a flat
+# list would be OR.
+#
+#   ip_address alone  — one NAT'd club or a mis-detected proxy address locks
+#                       out everyone behind it.
+#   username alone    — trivial denial of service: anyone who knows a
+#                       username can lock that pilot out at will.
+#   the combination   — an attacker locks only their own address against that
+#                       username; the real pilot, from their own address, is
+#                       unaffected.
+#
+# The cost is that a distributed attacker gets AXES_FAILURE_LIMIT tries per
+# address. Against a hobby app with ~50 accounts that is the right trade:
+# password strength is the actual defence, and locking real pilots out of
+# their own checklist mid-preflight is the failure that would actually hurt.
+AXES_LOCKOUT_PARAMETERS = [["username", "ip_address"]]
+
+# axes defaults to 3, which a pilot mistyping a password on a phone can reach
+# honestly.
+AXES_FAILURE_LIMIT = 5
+
+# axes defaults to None, which means the lockout NEVER expires and has to be
+# cleared by hand with `manage.py axes_reset`. That turns one bad afternoon
+# into a support request.
+AXES_COOLOFF_TIME = timedelta(minutes=30)
+
+# axes defaults to False, so failures accumulate across successful logins —
+# fail twice on Monday, twice on Tuesday, and the next slip locks you out.
+AXES_RESET_ON_SUCCESS = True
+
+# Rendered with the request, so it gets the context processors and can extend
+# base.html. Served with 429, which axes sets via AXES_HTTP_RESPONSE_CODE.
+AXES_LOCKOUT_TEMPLATE = "lockout.html"
+
+# AXES_IPWARE_META_PRECEDENCE_ORDER defaults to ("REMOTE_ADDR",) — deliberately
+# left alone. Trusting X-Forwarded-For without knowing the proxy count lets a
+# client spoof its own address and bypass the lockout entirely. If cPanel ever
+# fronts this app with something that hides the client address, the symptom is
+# every attempt sharing one IP, and the fix is AXES_IPWARE_PROXY_COUNT — not
+# adding the header to the precedence order.
+
+# ── Data retention ─────────────────────────────────────────────────────────── #
+#
+# Applied by checklist/maintenance.py, which runs from the checklist_prune
+# command, from POST_MIGRATE_COMMANDS on deploy, and — behind the interval
+# below — at the start of a flight. The flight trigger is the one that matters:
+# it ties cleanup to usage rather than to release cadence, and these tables
+# only grow when the app is used.
+#
+# One flight is ~170 rows (1 session + 19 eager attribute rows + up to 363 lazy
+# item states) plus a last_datarefs snapshot, all inside db.sqlite3, so this is
+# what keeps the pre-migrate backup from growing without limit.
+CLEANUP_KEEP_SESSIONS_PER_USER = 4    # most recent flights kept per account
+CLEANUP_ORPHAN_DAYS = 30              # ownerless sessions, by last contact
+CLEANUP_MIN_INTERVAL_HOURS = 24       # how often the flight-start trigger fires
+
 # ── Plugin compatibility window ────────────────────────────────────────────── #
 #
-# PLUGIN_MIN_VERSION  — plugins below this tuple are blocked (response includes
-#                       plugin_status: "blocked" and the update URL).
-# PLUGIN_WARN_BELOW   — plugins at or above MIN but below this get a warning.
+# There is nothing to configure. checklist/plugin_views.py derives the window
+# from checklist/plugin_version.py: a plugin a major version behind is blocked,
+# a minor version behind is warned, a patch behind is fine, and one newer than
+# this app is fine too. See plugin_status_for_version for why each of those is
+# the way round it is.
 #
-# Sliding-window policy: when a new minor version ships, the previous minor
-# version moves to "warn" and the one before that moves to "blocked".
-# Patch-only releases (1.0.x → 1.0.y) never change the window.
-
-# Set at the 1.1.0 release. Nothing in 1.1.0 changed the wire protocol — the
-# changes are a dataref-type cache, a persistent worker thread and a faster
-# tick — so a 1.0.2 plugin still works correctly, just slower. Blocking it
-# would be gratuitous; warning is what the window is for.
-#
-# Setting MIN to the current version instead would leave the warn band empty,
-# because "blocked" is tested first and would catch everything below it — so
-# nobody would ever see a warning.
-PLUGIN_MIN_VERSION = (1, 0, 2)   # the oldest version ever released; blocks nothing that exists
-PLUGIN_WARN_BELOW  = (1, 1, 0)   # anything older than the current release is nudged
+# PLUGIN_MIN_VERSION and PLUGIN_WARN_BELOW used to live here. They had to be
+# slid by hand at every plugin release, and getting the order wrong shipped an
+# app that warned about the plugin shipped beside it.
 
 # Where a pilot is sent to get the plugin.
 #

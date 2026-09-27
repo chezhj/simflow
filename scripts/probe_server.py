@@ -194,7 +194,7 @@ def main():
     ap.add_argument("-n", type=int, default=15, help="requests per measurement")
     ap.add_argument("--plugin-version", default=DEFAULT_PLUGIN_VERSION,
                     help="sent as X-Plugin-Version; keep it at or above "
-                         "PLUGIN_WARN_BELOW or the web UI will show an update banner")
+                         "the current plugin version, or the web UI will show an update banner")
     ap.add_argument("--state", action="store_true",
                     help="also probe /api/plugin/state/ — HAS SIDE EFFECTS: it sends "
                          "the real watch list and can auto-check items. Reset the "

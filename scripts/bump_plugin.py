@@ -5,7 +5,8 @@ Bump the xFlow plugin version — two-phase workflow.
 Phase 1 — prepare (run first):
     python scripts/bump_plugin.py 1.1.0
 
-  1. Updates PLUGIN_VERSION in xplane_plugin/xFlow/PI_xFlow.py
+  1. Updates PLUGIN_VERSION in xplane_plugin/xFlow/PI_xFlow.py and
+     CURRENT_PLUGIN_VERSION in checklist/plugin_version.py
   2. Prepends a stub section to xplane_plugin/CHANGELOG.md
   3. Commits: "chore(plugin): bump version to X.Y.Z"
   4. Tags: plugin-vX.Y.Z
@@ -32,6 +33,12 @@ REPO_ROOT = Path(__file__).resolve().parent.parent
 PLUGIN_FILE = REPO_ROOT / "xplane_plugin" / "xFlow" / "PI_xFlow.py"
 PLUGIN_CHANGELOG = REPO_ROOT / "xplane_plugin" / "CHANGELOG.md"
 
+# The app's copy of the plugin version. It has to move in the same commit:
+# release-deploy.yaml excludes xplane_plugin from the rsync, so the server
+# cannot read PI_xFlow.py and this file is the only thing it has to compare a
+# client's reported version against.
+VERSION_MARKER = REPO_ROOT / "checklist" / "plugin_version.py"
+
 
 def _run(cmd: list[str], check: bool = True) -> subprocess.CompletedProcess:
     print(f"  $ {' '.join(cmd)}")
@@ -57,6 +64,23 @@ def _set_version(new_ver: str) -> None:
     if new_text == text:
         sys.exit("ERROR: PLUGIN_VERSION replacement had no effect — check the file.")
     PLUGIN_FILE.write_text(new_text, encoding="utf-8")
+
+
+def _set_marker_version(new_ver: str) -> None:
+    """Keep checklist/plugin_version.py in step with PI_xFlow.py."""
+    text = VERSION_MARKER.read_text(encoding="utf-8")
+    new_text = re.sub(
+        r'^(CURRENT_PLUGIN_VERSION\s*=\s*")[^"]+(")',
+        rf"\g<1>{new_ver}\g<2>",
+        text,
+        flags=re.MULTILINE,
+    )
+    if new_text == text:
+        sys.exit(
+            f"ERROR: CURRENT_PLUGIN_VERSION replacement had no effect in "
+            f"{VERSION_MARKER.relative_to(REPO_ROOT)} — check the file."
+        )
+    VERSION_MARKER.write_text(new_text, encoding="utf-8")
 
 
 def _prepend_changelog(new_ver: str) -> None:
@@ -116,11 +140,13 @@ def main() -> None:
     print(f"Bumping plugin version: {old_ver} → {new_ver}")
 
     _set_version(new_ver)
+    _set_marker_version(new_ver)
     _prepend_changelog(new_ver)
 
     print("Staging files …")
     _run(["git", "add",
           str(PLUGIN_FILE.relative_to(REPO_ROOT)),
+          str(VERSION_MARKER.relative_to(REPO_ROOT)),
           str(PLUGIN_CHANGELOG.relative_to(REPO_ROOT))])
 
     print("Committing …")

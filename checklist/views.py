@@ -13,6 +13,7 @@ from django.urls import reverse
 from django.views import generic
 from django.views.decorators.http import require_POST
 
+from checklist.maintenance import run_cleanup_if_due
 from checklist.simbrief import SimBrief
 
 from .models import (
@@ -410,6 +411,13 @@ def profile_view(request):
             pilot_role=pilot_role,
             pilot_function=pilot_function,
         )
+
+        # Housekeeping, at most once a day across all workers and never able
+        # to fail this request — see checklist/maintenance.py. Placed after the
+        # session exists so a pilot is never kept waiting on cleanup before
+        # their flight is created, and so the new session is already safe from
+        # the retention query.
+        run_cleanup_if_due()
 
         # Store session key — this is now the only flight-state key in Django session
         request.session["flight_session_key"] = session.session_key

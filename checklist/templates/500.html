@@ -1,0 +1,87 @@
+{% comment %}
+500 — server error. STANDALONE BY NECESSITY. Do not make this extend
+checklist/base.html, however much it would tidy the duplication up.
+
+django.views.defaults.server_error renders with `template.render()` — no
+request, no context, no context processors. base.html reads `sop`, `sop_icao`,
+`sop_notes`, `user.is_authenticated` and half a dozen `request.session.sb_*`
+keys, every one of which would resolve to empty here. Django does not raise on
+a missing variable, so the page would render — as a shell with the conn-bar
+reading "ORIG → DEST", no SOP, and a signed-out nav. Looking broken is worse on
+the one page whose job is to look deliberate. A test asserts this file renders
+correctly against a genuinely empty context.
+
+{% static %} is safe: no STATICFILES_STORAGE/STORAGES is configured, so it is
+plain string concatenation with STATIC_URL and cannot raise during a 500. The
+stylesheets are served by Apache from STATIC_ROOT, so they load even when
+Django is the broken part — which is why only tokens.css (the custom
+properties) and components.css (.auth-card et al) are pulled in. The layout
+rules are skipped because .page assumes a flex body this page does not have,
+so the few lines of centring below stand in for it.
+
+Nothing here queries the database. A 500 may well BE the database.
+
+The home link is hardcoded to "/" rather than using the url tag: a
+NoReverseMatch raised inside the 500 handler drops the pilot to Django's bare
+fallback page, and checklist:start is mounted at "" so the string is identical
+anyway. Revisit if the app is ever mounted under a prefix.
+{% endcomment %}
+{% load static %}<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="application-name" content="SimFlow">
+    <meta name="description" content="SimFlow — X-Plane procedure companion. Stay in the flow.">
+    <meta name="keywords" content="737, checklist, simulation, X-Plane, training">
+    <title>Unable to comply · SimFlow</title>
+    <link rel="icon" type="image/x-icon" href="{% static 'checklist/img/favicon.ico' %}">
+    <link rel="stylesheet" href="{% static 'checklist/css/tokens.css' %}">
+    <link rel="stylesheet" href="{% static 'checklist/css/components.css' %}">
+    <style>
+        /* Stands in for layout.css's .page, which assumes a flex body. */
+        body {
+            margin: 0;
+            min-height: 100vh;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            gap: var(--space-4, 16px);
+            padding: var(--space-4, 16px);
+            background: var(--color-bg, #F4F5F3);
+            color: var(--color-ink, #111714);
+            font-family: var(--font-sans, -apple-system, 'Segoe UI', system-ui, sans-serif);
+        }
+        .err-mark { height: 28px; width: 28px; }
+        .err-code {
+            font-family: var(--font-mono, ui-monospace, monospace);
+            font-size: 0.75rem;
+            letter-spacing: 0.12em;
+            text-transform: uppercase;
+            color: var(--color-ink-muted, #7A8882);
+        }
+        .err-title { margin: 0; font-size: 1.5rem; }
+    </style>
+</head>
+<body>
+    <img class="err-mark" src="{% static 'checklist/img/simflow-mark.svg' %}"
+         alt="SimFlow" height="28" width="28">
+    <div class="err-code">500 · Server error</div>
+    <h1 class="err-title">Unable to comply</h1>
+
+    <div class="auth-shell">
+        <div class="auth-card">
+            <div class="auth-card-section">
+                <p class="auth-notice">
+                    Something failed on our side of the datalink. The fault has
+                    been logged and reported to the maintainer — no action
+                    needed from you. If a checklist was in progress, its state
+                    is saved and will be there when the link is restored.
+                </p>
+                <a class="auth-btn auth-btn--outline" href="/">← Return to field</a>
+            </div>
+        </div>
+    </div>
+</body>
+</html>

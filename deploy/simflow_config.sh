@@ -41,7 +41,15 @@ SHARED_PATHS=("logs")
 # the content genuinely dropped. activate.sh guards
 # each command with a `manage.py help --commands` check, so it is safely skipped
 # (not an error) when re-activating an older tag that lacks the command.
-POST_MIGRATE_COMMANDS=("checklist_content import --prune --noinput")
+#
+# checklist_prune is belt-and-braces: the flight-start trigger in
+# checklist/maintenance.py is the primary clock, because it tracks usage rather
+# than how often a release ships. This covers the case where nobody flies for a
+# long stretch but visitors keep leaving django_session rows behind.
+POST_MIGRATE_COMMANDS=(
+    "checklist_content import --prune --noinput"
+    "checklist_prune --noinput"
+)
 
 # Used by the GitHub Actions smoke test after activation.
 SMOKE_URL="https://simflow.vdwaal.net/"

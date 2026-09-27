@@ -637,176 +637,189 @@ None of these are launch blockers, but all of them bite within the first weeks.
 
 ---
 
-### [ ] 5.1 **[decide + code]** Session table cleanup — cron vs trigger
+### [x] 5.1 / 5.2 **[done]** Retention: flight sessions, logs, expired sessions
 
-**Confirmed**: no `SESSION_ENGINE` is set, so Django's default
-`django.contrib.sessions.backends.db` is in use and every session is a row in
-`django_session`. The app writes to the session on the profile page (`attrib`,
-`dual_mode`, `pilot_role`, the `sb_*` SimBrief fields), so an anonymous
-visitor who touches it leaves a row. Expiry is logical only: the row outlives
-its own `expire_date` until something deletes it, and `clearsessions` is called
-nowhere in the repo.
+**Decided**: keep **4** flight sessions per account, drop ownerless sessions
+untouched for **30** days.
 
-#### The proposal — "on starting a flight, keep the last 4" — and which table it fits
+Built as one command, `checklist_prune`, over `checklist/maintenance.py`, doing
+all three growing things at once: `FlightSession` and its cascade, the
+`logs/session_<id>.jsonl` files that 5.5 made persistent, and expired
+`django_session` rows.
 
-It is a good design, but it belongs to **5.2, not here.** The two tables have
-different populations:
+**The clock is usage, not release cadence.** `run_cleanup_if_due()` is called
+at the start of a flight, behind a once-per-24-h gate. The deploy hook alone
+would have fired as often as releases happen, which for a settled product may
+be twice a year — and these tables only grow when the app is used.
+`POST_MIGRATE_COMMANDS` keeps `checklist_prune --noinput` as belt-and-braces
+for the case where nobody flies but visitors keep browsing.
 
-| | `django_session` (5.1) | `FlightSession` (5.2) |
-|---|---|---|
-| written by | every visitor who loads the profile page | only a pilot who clicks Start Checklist |
-| row cost | ~400 bytes | ~170 rows: 1 + **19** eager `FlightSessionAttribute` (one per Attribute) + up to 363 lazy `FlightItemState`, plus a `last_datarefs` JSON blob |
-| keyed per user | no — anonymous visitors included | yes, via `user_profile` |
+**The gate is a conditional UPDATE, not a cached timestamp.** No `CACHES` is
+configured, so `LocMemCache` is per-Passenger-worker and each worker would run
+its own daily sweep. `MaintenanceState.claim()` is one atomic statement, so of
+ten simultaneous callers exactly one wins — asserted directly in
+`test_exactly_one_of_many_simultaneous_claims_wins`. The claim is taken
+*before* the work, so a crashed run cannot hold the gate open.
 
-**A flight-start trigger cannot clean `django_session`**, because the rows that
-accumulate come from people who never start a flight. It cleans the table that
-is not the problem and misses the one that is. For `FlightSession` the same
-trigger fits exactly: it fires when a row is created, and "keep the last 4 per
-user" gives a hard cap of 4 × users.
+**Three protections, each with a test:**
 
-#### Trigger, for `FlightSession` — pros and cons
-
-**Pros**
-- No cron. Nothing to configure in cPanel, nothing invisible to the repo,
-  nothing to recreate after a host migration.
-- In version control, reviewable and unit-testable.
-- Work is proportional to use, and the bound is per user rather than global —
-  at 50 pilots that is ≤200 sessions and ~34,000 child rows, predictable.
-
-**Cons**
-- It is a **write inside a user-facing action**. Steady state deletes roughly
-  one old session per new one: ~170 row deletes across three tables during
-  Start Checklist. Fast in absolute terms on SQLite, but SQLite serialises
-  writers across Passenger workers, so it widens the write-lock window on a
-  request a pilot is waiting on. This is the one real objection, and it is the
-  same concern behind 4.1.
-- **Anonymous flight sessions are never reached.** `user_profile` is
-  `null=True` with `on_delete=SET_NULL`, so a session with no profile — or one
-  orphaned by a deleted account — has no "per user" bucket and lives forever.
-  A trigger-only scheme needs a second sweep for those.
-- **Dormant users keep their last 4 forever.** Bounded, so arguably fine, but
-  it is retention by count rather than by age: a pilot who stops flying keeps
-  data indefinitely, which matters more for a privacy answer than for disk.
-- A failure mid-delete must not break Start Checklist, so it needs wrapping —
-  cleanup failing silently is correct here, and that has to be deliberate.
-
-**Mitigation for the cost objection**: do the delete *after* the response, or
-cap it (delete at most one stale session per start, so the work per request is
-bounded even if a user has 40 old sessions).
-
-#### So what cleans `django_session`?
-
-Four options that do not need a daily cron:
-
-| option | verdict |
+| rule | why |
 |---|---|
-| **`SESSION_ENGINE = signed_cookies`** — no table at all | Tempting: the payload is small (≤19 ints plus a few short strings) and fits a 4 KB cookie easily. **But** sessions become unrevocable — a copied cookie stays valid until expiry and logout cannot kill it, and a user can replay an old cookie to revert state. A security regression right after Phase 1 hardened this area. |
-| **`clearsessions` in `POST_MIGRATE_COMMANDS`** | Zero infrastructure, already a supported hook, runs at every deploy. Bounds the table to roughly one release cycle's visitors. |
-| **probabilistic sweep** — 1 request in N deletes ≤K expired rows | No cron, covers anonymous rows, but puts an unpredictable write on a random visitor's request; same SQLite lock concern as above. |
-| **daily cPanel cron** | Tightest bound, but configured outside the repo and invisible to it. |
+| `is_active` sessions survive the keep-N sweep | starting a flight deactivates a user's others, so the active one is always newest — but deleting a session a pilot is flying is not a risk worth taking on an invariant holding |
+| `is_active` is **ignored** for orphans | an anonymous session is only deactivated through its own browser session key; lose the cookie and it stays active forever, so honouring the flag would make the sweep a no-op for exactly the rows it collects |
+| age is `last_plugin_contact`, falling back to `created_at` | the plugin stamps it at 2 Hz, so a session opened 60 days ago and still being flown is never collected on age alone |
 
-**Scale check before choosing.** A `django_session` row is ~400 bytes;
-10,000 visitors is ~4 MB. That is not a threat to SQLite — the reason to care
-is that it rides in every pre-migrate backup. `FlightSession` and its children
-grow faster: 100 flights a week is ~17,000 child rows a week.
+A stray log file for a session that no longer exists is bounded by mtime as
+well as existence, so a file written just after the pk query is never caught by
+the race. The trigger swallows and logs every failure: a pilot who cannot start
+a checklist because housekeeping failed is a far worse outcome than a table
+that grows for another day.
 
-**[decide]**. My recommendation, given the above: `clearsessions` in
-`POST_MIGRATE_COMMANDS` for `django_session` — proportionate to a table that
-is not really the problem, and it costs one line — plus the trigger for
-`FlightSession` under 5.2, capped at one deletion per start, with an
-age-based sweep for the anonymous and orphaned rows the trigger cannot see.
+**Verified end to end** against a real SQLite file and real migrations, not
+only in tests: 7 owned sessions → 4 kept, a 45-day orphan deleted, a 5-day
+orphan kept, 4 log files removed, and `--dry-run` wrote nothing. 29 tests in
+`checklist/tests/test_maintenance.py`.
 
-### [ ] 5.2 **[code]** Retention for `FlightSession` and its children
+**Knobs** in `settings/base.py`: `CLEANUP_KEEP_SESSIONS_PER_USER`,
+`CLEANUP_ORPHAN_DAYS`, `CLEANUP_MIN_INTERVAL_HOURS`.
 
-This one is real and it is in the database. `FlightSession` rows are flagged
-`is_active=False` and never deleted, and three tables cascade off them
-(`models.py`): `FlightSessionAttribute`, `FlightItemState` and
-`RuleMissReport`. Each `FlightSession` also carries a `last_datarefs` JSON blob
-— the full dataref snapshot, ~27–63 keys — which is the largest per-row cost.
-All of it is inside `db.sqlite3`, so it inflates every pre-migrate backup.
+**Remaining gap, unchanged**: browsing traffic with no flying traffic fires
+nothing between deploys. Bounded (~400 bytes a row, ~4 MB per 10,000 visitors)
+and only a daily cron closes it completely. Not worth the cPanel dependency
+now; revisit if the numbers ever say so.
 
-**Change**: a `checklist_prune` management command (alongside the existing
-`checklist_content`), deleting inactive `FlightSession`s older than N days.
-The cascade handles the children. Give it the same shape as
-`checklist_content`, which the team already knows:
+**Before the first production run**: `manage.py checklist_prune --dry-run` on a
+copy of the live database, to see the real counts before anything is deleted.
 
-- `--days N` (default 90)
-- `--dry-run` reporting the count per table without writing
-- `--noinput` for the cron
+### [x] 5.3 **[done]** Custom 404, 500 and CSRF-failure pages
 
-**[decide]** the retention window, and whether to keep the row but null out
-`last_datarefs` instead of deleting — that keeps flight history for a future
-"your past flights" feature while dropping the bulk. I lean toward: delete
-after 90 days, and null `last_datarefs` after 7. Two thresholds, one command.
+Three templates at `checklist/templates/` — the app template root, since
+`DIRS: []` and `APP_DIRS: True` means Django resolves the bare names. Nothing
+installed ships those names, and `checklist` is first in `INSTALLED_APPS`.
 
-**Do not** wire this into `POST_MIGRATE_COMMANDS` before it has run clean with
-`--dry-run` on production data. A prune bug at deploy time is a data-loss bug,
-and unlike the content import there is no fixture to restore from.
+Wording is in the aviation register the rest of the UI uses: *Off the charts*,
+*Unable to comply*, *Clearance expired*. Each offers one way out, home.
 
-**Verify**: `--dry-run` on a copy of the production database first, row counts
-per table before and after.
+**The design constraint, verified in the installed Django source:**
 
----
-
-### [ ] 5.3 **[code]** Custom 404 and 500 templates
-
-With `DEBUG=False` a visitor currently gets Django's bare white page.
-`TEMPLATES` has `DIRS: []` and `APP_DIRS: True`, so the files go at
-`checklist/templates/404.html` and `checklist/templates/500.html` — the app
-template root, not under `checklist/templates/checklist/`.
-
-**One exact constraint, verified in the installed Django source**
-(`django/views/defaults.py`):
-
-- `page_not_found` calls `template.render(context, request)` — the request is
-  passed, so **context processors run**. `404.html` may extend `base.html` and
-  will get `sop`, `user` and `request` as usual.
-- `server_error` calls `template.render()` — no request, no context, **no
-  context processors**. A `500.html` extending `base.html` will not crash
-  (Django resolves missing variables to empty), but every nav item, the SOP
-  name and the auth state render blank.
-
-So `500.html` should be self-contained: its own minimal markup, inline or
-`{% load static %}`-linked CSS, no dependency on `sop_context`. `404.html` can
-use the real shell.
-
-**Verify**: with `DEBUG=False` and `ALLOWED_HOSTS` set, hit a bad URL for the
-404; for the 500, add a temporary view that raises, or use the Django test
-client with `raise_request_exception=False`.
-
----
-
-### [ ] 5.4 **[decide + code]** Rate limiting
-
-Nothing throttles `/login/`, `/register/`, the password-reset form or
-`/admin/`.
-
-**A constraint that rules out the usual answer**: no `CACHES` is configured in
-any settings module, so Django falls back to `LocMemCache`, which is
-**per-process**. The app runs under Passenger with several workers, so a
-cache-based limiter (`django-ratelimit` and most hand-rolled middleware) would
-keep a separate counter per worker and let an attacker through roughly
-`n_workers` times the intended rate. Any cache-based option therefore also
-requires a shared cache backend — on this host that means the database cache
-table (`createcachetable`), since there is no Redis or Memcached.
-
-| option | cost | notes |
+| handler | renders with | context processors |
 |---|---|---|
-| `django-axes` | new dependency + migrations | purpose-built for login lockout, DB-backed so worker-safe, admin integration |
-| `django-ratelimit` + DB cache table | new dependency + `createcachetable` | flexible, applies to any view, but needs the shared cache to be correct |
-| hand-rolled middleware + DB cache table | no dependency, more code to own | same cache requirement; a lockout table is most of `axes` reimplemented |
-| Apache / cPanel throttling | no code | coarse, per-IP, and configured outside the repo so it is invisible to the project |
+| `page_not_found` | `template.render(context, request)` | **yes** |
+| `server_error` | `template.render()` | **no** |
+| `csrf_failure` | `t.render(request=request)` | yes, but no context dict |
 
-**[decide]** which. For ~50 users on shared hosting my recommendation is
-`django-axes`: it is DB-backed so the worker problem disappears, it is the
-narrowest fit (failed-login lockout is the actual threat), and it needs no
-cache infrastructure.
+So `404.html` and `403_csrf.html` extend `base.html` and keep the nav, while
+**`500.html` is standalone**. Extending base there would resolve `sop`,
+`user` and every `request.session.sb_*` key to empty — Django does not raise on
+a missing variable, so it would render as a shell with the conn-bar reading
+"ORIG → DEST", no SOP and a signed-out nav. `Test500IsStandalone` guards this
+directly: one test renders it against a genuinely empty context, another
+asserts it contains none of `conn-brand`, `info-panel` or `id="page"`, so a
+later tidy-up that makes the three files look alike fails before it ships.
 
-**Verify**: n failed logins from one IP produce a lockout; a successful login
-resets the counter; the lockout does not trip a legitimate user behind NAT too
-easily — check `AXES_LOCKOUT_PARAMETERS` before shipping.
+`403_csrf.html` was added beyond the original scope: an expired login form
+currently shows Django's *"CSRF verification failed. Request aborted."*, which
+reads as an accusation rather than a stale token. Note `csrf_failure` passes no
+context dict, so `reason`, `no_referer` and `no_cookie` are **not** available —
+a test asserts the template does not reference them.
 
----
+`{% static %}` is safe inside the 500 handler: no `STATICFILES_STORAGE` or
+`STORAGES` is configured, so it is plain concatenation with `STATIC_URL` and
+cannot raise on a missing manifest. Only `tokens.css` and `components.css` are
+pulled in, with a few lines of inline centring standing in for `layout.css`'s
+`.page`, which assumes a flex body the standalone page does not have. The home
+link is hardcoded to `/` so a `NoReverseMatch` cannot drop the pilot to
+Django's bare fallback.
+
+**Two Django rules cost a round each and are worth remembering**: `{# #}` is
+single-line only, so a multi-line one leaves any `{% %}` inside it to parse as
+a real tag; and `{% extends %}` must be the first tag, so a `{% comment %}`
+header has to sit below it.
+
+**Verified by rendering, not only by assertion**: all three pages were rendered
+against a real database and read back — 404 and 403 with the full shell and the
+SOP row populated, 500 standalone and correct with no context at all. 13 tests
+in `checklist/tests/test_error_pages.py`; `djlint` clean.
+
+**Not done**: `400.html`. It is almost entirely bots with bad `Host` headers,
+renders with no context like 500, and no real user sees it.
+
+### [x] 5.4 **[done]** Login throttling — django-axes
+
+**Decided**: `django-axes` 8.3.1, for the reason the options table gave — its
+default handler is `AxesDatabaseHandler`, so counters live in the database. A
+cache-backed limiter would fall back to `LocMemCache`, which is per-Passenger
+worker, and an attacker would get `failure_limit × n_workers` attempts.
+
+**Every configured value overrides an axes default that is wrong here.**
+Dropping any line is a bug, not a simplification, and each has a test:
+
+| setting | axes default | ours | why |
+|---|---|---|---|
+| `AXES_FAILURE_LIMIT` | 3 | **5** | 3 is reachable by honest mistyping on a phone |
+| `AXES_COOLOFF_TIME` | `None` | **30 min** | `None` means the lockout **never expires** and needs `manage.py axes_reset` by hand |
+| `AXES_RESET_ON_SUCCESS` | `False` | **True** | otherwise failures bank up across successful logins forever |
+| `AXES_LOCKOUT_PARAMETERS` | `["ip_address"]` | **`[["username", "ip_address"]]`** | see below |
+
+**The lockout parameter is the one that matters.** A nested list is AND in
+axes; a flat list is OR.
+
+- `ip_address` alone — one NAT'd club, household or mis-detected proxy locks
+  out everyone behind it.
+- `username` alone — trivial denial of service: anyone who knows a username
+  can lock that pilot out of their own checklist.
+- the combination — an attacker locks only their own address against that
+  username; the real pilot, from their own address, is unaffected.
+
+The cost is that a distributed attacker gets 5 tries per address. For ~50
+accounts that is the right trade: password strength is the actual defence, and
+locking a real pilot out mid-preflight is the failure that would hurt.
+Two tests cover exactly these two failure modes, so a later "simplification"
+to a flat list fails loudly.
+
+`AXES_IPWARE_META_PRECEDENCE_ORDER` is left at `("REMOTE_ADDR",)`. Trusting
+`X-Forwarded-For` without a known proxy count lets a client spoof its address
+and bypass the lockout; a test asserts a forwarded header cannot move the
+recorded address.
+
+**Lockout page**: `checklist/templates/lockout.html`, "Hold short", 429. axes
+renders it through `render(request, ...)`, so context processors run and it
+extends `base.html`. The wait is rendered by a new `natural_duration` filter
+reading axes' own `cooloff_timedelta` — "30 minutes" rather than "0:30:00",
+and from the same setting the lockout uses, so the copy cannot drift. The
+attempted username is not echoed, for the same reason as the 404 path.
+
+Lockouts now reach `logs/django.log`: the `axes` logger is not under `django`,
+so without an explicit entry in `prod.py` it propagated to a handler-less root
+and Python's lastResort sent it to stderr — the server error log, not ours.
+
+> **A real bug this caught, which had nothing to do with throttling.** Adding
+> `AxesStandaloneBackend` gave the project two `AUTHENTICATION_BACKENDS`, and
+> `login(request, user)` can only infer the backend when there is exactly one.
+> `register_view` calls `login()` directly on a freshly created user, never
+> through `authenticate()`, so it began raising `AttributeError: 'User' object
+> has no attribute 'backend'` — **registration was broken outright**. Fixed by
+> naming `ModelBackend` explicitly (`AxesStandaloneBackend` only ever raises
+> for a locked-out attempt; it never returns a user, so it can never be the
+> backend a session was established with). Four existing tests caught it, and
+> a dedicated test now lives beside the change that caused it.
+
+**Two gaps this does NOT close**, stated rather than implied:
+
+- **Registration spam.** axes throttles failed *authentication*. Bulk account
+  creation at `/register/` is untouched. If it ever happens, the answer is a
+  CAPTCHA or email confirmation before activation, not axes.
+- **Password-reset email flooding.** The reset form is not an authentication
+  attempt, so it is not counted. Django's reset view already refuses to
+  confirm whether an account exists, so enumeration is covered; volume is not.
+
+17 tests in `checklist/tests/test_login_throttling.py`. Verified by driving a
+real lockout end to end against a live database: five failures returned 429
+with the custom page, and the *correct* password was then refused.
+
+**On the server**: `manage.py axes_reset` clears all lockouts,
+`axes_reset_username <name>` clears one. Worth knowing before the first
+support message.
 
 ### [x] 5.5 **[done]** Stop discarding `logs/` on every deploy
 
@@ -834,70 +847,82 @@ than bounded by the release, so retention has to cover them. Factored in below.
 **Verify after the next deploy**: `ls -l <release>/logs` shows a symlink, and
 `django.log` still holds entries written before that deploy.
 
-### [ ] 5.7 **[code]** Derive the plugin compatibility window instead of configuring it
+### [x] 5.7 **[done]** The compatibility window is derived, not configured
 
-**Decided 2026-09-27**: `PLUGIN_MIN_VERSION` and `PLUGIN_WARN_BELOW` should go
-away. The rule becomes semantic rather than configured:
+`PLUGIN_MIN_VERSION` and `PLUGIN_WARN_BELOW` are gone. The rule is now
+semantic, in `plugin_status_for_version`:
 
-- **major mismatch → blocked** (the wire protocol changed)
-- **minor mismatch → warn** (the plugin still works, but is behind)
-- patch difference → ok
-
-That is a better rule than the sliding window, for a reason this release
-demonstrated: the window has to be hand-slid in lockstep with every plugin
-release, and doing it in the wrong order ships an app that warns about the
-plugin shipped beside it. `TestTheRealWindowIsSane` now catches that, but not
-needing to remember it at all is better.
-
-**The one thing to resolve**: "mismatch" needs something to compare against —
-the current plugin version, which today only exists as `PLUGIN_VERSION` in
-`xplane_plugin/xFlow/PI_xFlow.py`. Options:
-
-| source | notes |
+| reported version | status |
 |---|---|
-| parse `PI_xFlow.py` at startup | single source of truth, no duplication; couples app startup to a file in the plugin tree, which does ship in the release |
-| a `CURRENT_PLUGIN_VERSION` setting written by `bump_plugin.py` | no runtime parsing, but re-introduces a constant — one, derived automatically, instead of two maintained by hand |
-| read from the plugin CHANGELOG's top entry | same coupling, looser format |
+| a **major** behind | `blocked` — the wire protocol changed |
+| a **minor** behind | `warn` — still works, missing fixes |
+| a **patch** behind | `ok` — patch releases never move the window |
+| equal or **newer** | `ok` |
 
-Parsing `PI_xFlow.py` is the closest to "no constants", and
-`TestTheRealWindowIsSane.test_the_blocked_band_does_not_reach_the_current_release`
-already does exactly that parse, so the regex is written and tested.
+**Newer is deliberately `ok`, not blocked.** A plugin release is tagged
+*before* the app release that accompanies it, so there is always a window
+where a keen pilot runs a plugin this app has not heard of. Blocking them
+would punish them for the project's own release order, and the app is the one
+behind. An unreadable version stays `warn`, as before.
 
-`plugin_status_for_version` keeps its current contract — `'ok' | 'warn' |
-'blocked'`, with an unreadable version classified `warn` rather than `blocked`
-— so nothing downstream changes. The tests in
-`checklist/tests/test_plugin_version_notice.py` pin the behaviour and should
-be rewritten against version *pairs* rather than absolute tuples.
+> **The planned implementation would not have worked.** 5.7 named "parse
+> `PI_xFlow.py` at startup" as closest to "no constants". It is not viable:
+> `.github/workflows/release-deploy.yaml` line 134 excludes `xplane_plugin`
+> from the rsync, so `PI_xFlow.py` **is not present in a deployed release**.
+> Parsing it would have worked in dev and in tests and silently done nothing
+> in production — the worst of the three outcomes.
 
-**Until this ships**, the window is slid by hand at each plugin release, one
-minor at a time, per the policy comment in `settings/base.py`.
+So the source of truth is `checklist/plugin_version.py`, a generated file
+holding one string, written by `scripts/bump_plugin.py` in the same commit
+that bumps `PI_xFlow.py`. That is a derived fact rather than a policy knob:
+the two thresholds that had to be reasoned about are gone, and what remains
+cannot be got wrong by hand because nothing maintains it by hand.
+`test_the_marker_matches_the_plugin_source` fails if the two ever drift —
+the only place both files exist together is a test run from the repo.
 
-### [ ] 5.6 **[code]** Bound `_last_gate_item`
+**This closes the deferred decision from the 1.2.0 release.** With
+`CURRENT_PLUGIN_VERSION = "1.2.0"`, verified against the real released
+versions: `0.7.0` blocked, `1.0.2`/`1.1.0`/`1.1.2` warned, `1.2.0` and above
+ok. 1.1.x pilots are now nudged toward 1.2.0 automatically, which is what the
+hand slide would have done — without the hand slide, and without the risk of
+doing it in the wrong order.
 
-`plugin_views.py:106` keeps a module-level `dict[int, int | None]` keyed by
-flight-session id, written on every gate change and never pruned. It grows for
+Note this is *more lenient* than the old sliding-window policy would have
+been: 1.0.2 now warns rather than being blocked, because it shares a major
+with the current release. That is the right answer — 1.0.2 works, it is just
+old — and it is now a consequence of the rule rather than a judgement call
+made per release.
+
+### [x] 5.6 **[done]** `_last_gate_item` is bounded
+
+`plugin_views.py` kept a module-level `dict[int, int | None]` keyed by
+flight-session id, written on every gate change and never pruned. It grew for
 the life of the worker process, one entry per session that worker ever served.
 
-Tiny — two ints per entry, so thousands of sessions is still kilobytes — and a
-worker restart clears it, so this is housekeeping, not a leak that will bite.
-Worth fixing while the file is open: drop the entry when a session goes
-inactive, or replace the dict with a bounded mapping.
+Now an `OrderedDict` capped at 256 entries with least-recently-**used**
+eviction — reads count as use, so a session being polled every few seconds is
+not evicted by a burst of new ones just because its gate has not moved. The
+only consequence of an eviction is a duplicate `gate_changed` line if a
+long-dormant session returns, which is harmless: the log is an audit trail,
+not a state machine.
 
-**Verify**: a unit test asserting the entry is gone after the session ends.
+`None` is a real value (no gate item in this phase) and is kept distinct from
+the unseen sentinel `_GATE_UNSEEN = -1`; collapsing the two would either lose
+a `gate_changed` line or emit a spurious one. 8 tests in
+`checklist/tests/test_gate_cache.py`.
+
+Always was housekeeping rather than a leak that would bite — two ints an
+entry, cleared by a restart — but unbounded growth in a long-lived process is
+not worth keeping.
 
 ### 🚦 Gate 5
 
-**Done**: 5.5.
+**Done**: all of 5.1–5.7.
 
-**Decisions still needed**: 5.1 which `django_session` strategy, 5.2 the
-retention window and whether the trigger is capped at one deletion per start,
-5.4 which limiter. 5.3, 5.6 and 5.7 need no decision.
+**Decisions still needed**: none.
 
-**Suggested order**: 5.1 and 5.3 (small, independent), then 5.2 — 5.1's
-decision shapes 5.2, since the flight-start trigger discussed there is the
-same mechanism — then 5.4. 5.6 rides along with whichever change opens
-`plugin_views.py`. 5.7 is independent of all of them and can wait for a quiet
-moment after the release.
+**Phase 5 is complete.** Next: Phase 6 (server-side SSL redirect and the
+HSTS ramp), then Phase 7 — the actual announce blocker.
 
 ---
 

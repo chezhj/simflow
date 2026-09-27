@@ -8,6 +8,7 @@ not by the browser. Auth is via Bearer token, not Django session.
 import functools
 import json
 import logging
+from collections import OrderedDict
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -36,6 +37,7 @@ from .phase import (
     is_optional,
     visible_items,
 )
+from .plugin_version import CURRENT_PLUGIN_VERSION
 from .rules import collect_datarefs, collect_leaf_evaluations, evaluate_rule
 
 logger = logging.getLogger(__name__)
@@ -56,15 +58,32 @@ def _parse_version(version_str: str) -> tuple[int, ...]:
 
 def plugin_status_for_version(raw: str) -> str:
     """
-    Classify a plugin version string against PLUGIN_MIN_VERSION and
-    PLUGIN_WARN_BELOW: 'ok', 'warn', or 'blocked'.
+    Classify a plugin version as 'ok', 'warn' or 'blocked', semantically.
+
+    The rule is derived from CURRENT_PLUGIN_VERSION, not configured:
+
+        major behind   -> blocked   (the wire protocol changed)
+        minor behind   -> warn      (still works, but is missing fixes)
+        patch behind   -> ok        (patch releases never move the window)
+        equal or newer -> ok
+
+    This replaced a hand-maintained PLUGIN_MIN_VERSION / PLUGIN_WARN_BELOW
+    pair. The window had to be slid in lockstep with every plugin release,
+    and sliding it in the wrong order shipped an app that warned about the
+    plugin shipped beside it — which happened, and was caught by a test
+    rather than by anyone remembering.
+
+    Newer than us is deliberately 'ok' rather than blocked. A plugin release
+    is tagged BEFORE the app release that accompanies it, so there is always
+    a window where a keen pilot is running a plugin this app has not heard of.
+    Blocking them would punish them for the project's own release order, and
+    the app, not the plugin, is the one behind.
 
     A version we cannot read — absent, empty or unparseable — is 'warn', not
     'blocked'. Blocking is a hard stop: the server withholds session data and
     the checklist stops following the sim, which is the wrong answer to "this
-    client did not tell me what it is". Only a version that is explicitly
-    below the minimum earns that. It also fails safe in the other direction:
-    an unknown plugin is never silently treated as current.
+    client did not tell me what it is". It also fails safe the other way: an
+    unknown plugin is never silently treated as current.
 
     Shared with the browser poll, which asks the same question about the
     version stored on the FlightSession rather than a request header.
@@ -75,14 +94,27 @@ def plugin_status_for_version(raw: str) -> str:
     if version == (0, 0, 0):  # _parse_version's failure value
         return "warn"
 
-    min_ver = getattr(settings, "PLUGIN_MIN_VERSION", (0, 0, 0))
-    warn_ver = getattr(settings, "PLUGIN_WARN_BELOW", (0, 0, 0))
+    current = _parse_version(CURRENT_PLUGIN_VERSION)
+    if current == (0, 0, 0):
+        # The marker itself is unreadable. Nobody gets blocked or nagged over
+        # a fact this app has lost track of.
+        logger.error(
+            "CURRENT_PLUGIN_VERSION is unparseable (%r); "
+            "treating every plugin version as current",
+            CURRENT_PLUGIN_VERSION,
+        )
+        return "ok"
 
-    if version < min_ver:
+    # Compare on (major, minor) only; a shorter tuple like (1, 2) pads with 0.
+    def _pair(v):
+        return (v + (0, 0))[:2]
+
+    reported, mine = _pair(version), _pair(current)
+    if reported >= mine:
+        return "ok"
+    if reported[0] < mine[0]:
         return "blocked"
-    if version < warn_ver:
-        return "warn"
-    return "ok"
+    return "warn"
 
 
 def _plugin_status(request) -> str:
@@ -103,7 +135,39 @@ def get_datarefs(session) -> dict:
     return session.last_datarefs or {}
 
 # Last gate item pk per session — used to detect gate changes for logging.
-_last_gate_item: dict[int, int | None] = {}
+#
+# Bounded, because the plain dict this replaced was keyed by flight-session id
+# and never pruned: it grew for the life of the worker process, one entry per
+# session that worker ever served. Small — two ints an entry — and cleared by
+# a restart, so this is housekeeping rather than a leak that would ever bite,
+# but unbounded growth in a long-lived process is not worth keeping.
+#
+# Eviction is least-recently-used and its only consequence is a duplicate
+# "gate_changed" line if a long-dormant session comes back, because the
+# evicted entry reads as the "never seen" sentinel again. Harmless: the log
+# is an audit trail, not a state machine.
+_GATE_CACHE_MAX = 256
+_last_gate_item: "OrderedDict[int, int | None]" = OrderedDict()
+
+# Sentinel for "this worker has not seen this session", distinct from None,
+# which is a real value meaning "no gate item in this phase".
+_GATE_UNSEEN = -1
+
+
+def _remember_gate(session_pk: int, gate_pk: int | None) -> None:
+    """Record the current gate for a session, evicting the oldest if full."""
+    _last_gate_item[session_pk] = gate_pk
+    _last_gate_item.move_to_end(session_pk)
+    while len(_last_gate_item) > _GATE_CACHE_MAX:
+        _last_gate_item.popitem(last=False)
+
+
+def _previous_gate(session_pk: int):
+    """The gate last recorded for this session, or _GATE_UNSEEN."""
+    if session_pk not in _last_gate_item:
+        return _GATE_UNSEEN
+    _last_gate_item.move_to_end(session_pk)
+    return _last_gate_item[session_pk]
 
 
 def _session_log(session_id: int, entry: dict) -> None:
@@ -424,10 +488,10 @@ def plugin_state(request):
             ]
 
             gate_item_ = gate
-            prev_gate = _last_gate_item.get(session.pk, -1)
+            prev_gate = _previous_gate(session.pk)
             new_gate_pk = gate_item_.pk if gate_item_ else None
             if new_gate_pk != prev_gate:
-                _last_gate_item[session.pk] = new_gate_pk
+                _remember_gate(session.pk, new_gate_pk)
                 if gate_item_ is not None:
                     rule = gate_item_.auto_check_rule
                     entry = {

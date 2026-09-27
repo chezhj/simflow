@@ -1,0 +1,55 @@
+{% extends "checklist/base.html" %}
+{% comment %}
+429 — too many failed sign-in attempts (django-axes, AXES_LOCKOUT_TEMPLATE).
+
+Safe to extend base.html: axes renders this through
+`render(request, template, context, status=AXES_HTTP_RESPONSE_CODE)`, so the
+request is passed and the context processors run. Contrast 500.html, which
+gets neither.
+
+axes supplies `failure_limit`, `username`, and — only when AXES_COOLOFF_TIME
+is set — `cooloff_time` (an ISO 8601 duration string) and `cooloff_timedelta`.
+We set the cooloff, so both are present; `natural_duration` turns the
+timedelta into words rather than "0:30:00", and reads from the same setting
+the lockout itself uses, so the two cannot drift apart.
+
+`username` is deliberately not echoed. It is whatever was typed into the form,
+and reflecting attacker-chosen text into a page is a habit worth not having
+even where autoescaping makes it safe. It would also confirm to whoever is
+guessing that they reached the right form.
+{% endcomment %}
+{% load environment_tags %}
+
+{% block title %}Hold short · SimFlow{% endblock title %}
+
+{% block content %}
+<div class="auth-main">
+
+    <div class="proc-header">
+        <div class="proc-phase">429</div>
+        <h1 class="proc-title">Hold short</h1>
+    </div>
+
+    <div class="auth-shell">
+        <div class="auth-card">
+            <div class="auth-card-section">
+                <p class="auth-notice auth-notice--warn">
+                    Too many failed sign-in attempts from this address. Access
+                    to this account is held for
+                    {{ cooloff_timedelta|natural_duration|default:"a short while" }},
+                    then clears on its own — no action needed.
+                </p>
+                <p class="auth-notice">
+                    If that was you, this is a good moment to reset the
+                    password rather than guess again.
+                </p>
+                <a class="auth-btn auth-btn--outline"
+                   href="{% url 'password_reset' %}">Reset password</a>
+                <a class="auth-btn auth-btn--outline"
+                   href="{% url 'checklist:start' %}">← Return to field</a>
+            </div>
+        </div>
+    </div>
+
+</div>
+{% endblock content %}
