@@ -35,7 +35,11 @@ from checklist.models import (
 )
 from checklist.models import Attribute
 from checklist.tests.ViewTestCase import ViewTestCase
-from checklist.tests.testFactories import CheckItemFactory, SOPFactory
+from checklist.tests.testFactories import (
+    AttributeFactory,
+    CheckItemFactory,
+    SOPFactory,
+)
 from checklist.views import profile_view
 
 User = get_user_model()
@@ -426,3 +430,75 @@ class TestTheLogDirectoryIsOverridable(_RetentionBase):
         self.assertEqual(
             maintenance._log_dir(), pathlib.Path(settings.BASE_DIR) / "logs"
         )
+
+
+class TestTheDryRunMatchesTheRealThing(_RetentionBase):
+    """
+    The guarantee that makes a dry run worth running.
+
+    It did not hold. The dry run enumerated child models by hand —
+    FlightSessionAttribute, FlightItemState, RuleMissReport — and omitted
+    FlightInfo, a OneToOneField that also cascades. The first real production
+    run deleted 68 FlightInfo rows the dry run had never mentioned. Nothing
+    caught it because every test asserted on the models the list already knew
+    about.
+
+    This compares the two reports instead, so any model the cascade reaches is
+    covered whether or not anyone thought of it.
+    """
+
+    def setUp(self):
+        super().setUp()
+        SOPFactory()
+        self.item = CheckItemFactory()
+
+    def _populate(self):
+        from checklist.models import FlightInfo, RuleMissReport
+
+        for day in (0, 10, 20, 30, 40):
+            session = _session(self.profile, age_days=day)
+            FlightItemState.objects.create(
+                flight_session=session, checklist_item=self.item, status="checked"
+            )
+            FlightSessionAttribute.objects.create(
+                flight_session=session, attribute=AttributeFactory(), is_active=True
+            )
+            FlightInfo.objects.create(flight_session=session)
+            RuleMissReport.objects.create(
+                flight_session=session,
+                reported_at=timezone.now(),
+                reported_item_label="x",
+                active_phase="before-start",
+                leaf_evaluations=[],
+            )
+
+    def test_the_two_reports_agree_exactly(self):
+        self._populate()
+
+        planned = run_cleanup(keep=1, orphan_days=30, dry_run=True).rows_deleted
+        actual = run_cleanup(keep=1, orphan_days=30).rows_deleted
+
+        self.assertEqual(
+            planned,
+            actual,
+            "the dry run and the real run disagree — a dry run that under-reports "
+            "is worse than none, because it is trusted",
+        )
+
+    def test_the_cascade_includes_every_child_model(self):
+        """
+        Named explicitly as well, so a regression says which table went
+        missing rather than only that two dicts differ.
+        """
+        self._populate()
+
+        planned = run_cleanup(keep=1, orphan_days=30, dry_run=True).rows_deleted
+
+        for model_name in (
+            "FlightSession",
+            "FlightSessionAttribute",
+            "FlightItemState",
+            "RuleMissReport",
+            "FlightInfo",
+        ):
+            self.assertIn(model_name, planned, f"{model_name} missing from the plan")

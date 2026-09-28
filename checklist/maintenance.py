@@ -33,6 +33,7 @@ from pathlib import Path
 
 from django.conf import settings
 from django.core.management import call_command
+from django.db.models.deletion import Collector
 from django.db.models.functions import Coalesce
 from django.utils import timezone
 
@@ -224,20 +225,32 @@ def run_cleanup(
     )
 
     if dry_run:
-        # Report the cascade without performing it. Counting the children
-        # directly is the honest answer: Django reports them only as part of
-        # an actual delete.
-        from .models import (
-            FlightItemState,
-            FlightSessionAttribute,
-            RuleMissReport,
-        )
+        # Ask Django what the cascade is rather than listing the children by
+        # hand. The hand-written list held FlightSessionAttribute,
+        # FlightItemState and RuleMissReport — and silently omitted
+        # FlightInfo, a OneToOneField that also cascades. The first real run
+        # deleted 68 rows the dry run had never mentioned, which is precisely
+        # the failure a dry run exists to prevent. Collector is the same
+        # machinery delete() itself uses, so the two cannot disagree, and a
+        # child model added later is picked up without anyone remembering to.
+        collector = Collector(using=FlightSession.objects.db)
+        collector.collect(list(FlightSession.objects.filter(pk__in=doomed)))
 
-        for model in (FlightSessionAttribute, FlightItemState, RuleMissReport):
-            count = model.objects.filter(flight_session_id__in=doomed).count()
+        for model, instances in collector.data.items():
+            if instances:
+                report.rows_deleted[model.__name__] = len(instances)
+
+        # collector.data is only half the answer. A related model with no
+        # signals and no cascades of its own is "fast deleted" — Django issues
+        # one bulk DELETE and never materialises the rows, so it lands in
+        # fast_deletes as a queryset instead. Reading only .data reported just
+        # FlightSession and none of its children, which the parity test below
+        # caught immediately.
+        for queryset in collector.fast_deletes:
+            count = queryset.count()
             if count:
-                report.rows_deleted[model.__name__] = count
-        report.rows_deleted["FlightSession"] = len(doomed)
+                name = queryset.model.__name__
+                report.rows_deleted[name] = report.rows_deleted.get(name, 0) + count
         report.log_files_deleted = _count_session_logs(doomed)
         return report
 
