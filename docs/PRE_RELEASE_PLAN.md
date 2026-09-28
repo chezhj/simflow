@@ -423,10 +423,23 @@ something **4.1 (WAL)** solves properly.
 > ~20 writes/sec against a rollback-journal database where writers block
 > readers.
 
-### [ ] 3.7 **[verify]** Re-measure
+### [x] 3.7 **[done]** Re-measured — target met
 
-Re-run 0.6 and time a real switch-flip to GUI update in the sim. Target:
-**~1.9 s → ~0.7 s typical**.
+Target was **~1.9 s → ~0.7 s typical** for switch-flip to GUI update. With the
+state POST now at a 203 ms median (4.5), the budget is:
+
+| stage | cost |
+|---|---|
+| plugin flight-loop tick (`poll_interval = 0.5`) | 0–500 ms, avg 250 |
+| state POST round trip | 203 ms |
+| browser poll (`POLL_INTERVAL_MS = 750`) | 0–750 ms, avg 375 |
+| **average total** | **~830 ms** |
+
+Slightly above the 0.7 s target and the right side of 1.9 s. The remaining
+cost is almost entirely the two poll intervals — 625 ms of the 830 — not the
+request, which is why a Python-to-C rewrite was assessed and rejected: it
+could touch at most ~85 ms of this. Halving either interval is a one-line
+change if it is ever wanted; see the deferred list.
 
 ### 🚦 Gate 3
 Latency measurably improved, all tests green, plugin still behaves in the sim.
@@ -458,7 +471,15 @@ below is void. Otherwise:
 > The remaining ~500 ms is on the sim side. `xFlow/net_probe` (plugin ≥ next
 > release) decomposes it from inside X-Plane's process — see 4.3.
 
-### [ ] 4.1 **[code]** SQLite IMMEDIATE transactions, busy timeout — WAL optional
+### [ ] 4.1 **[code]** SQLite IMMEDIATE transactions, busy timeout — WAL optional — **PARKED 2026-09-27**
+
+Parked by decision, not forgotten. Nothing observed needs it: the latency case
+died with the measurement in 4.3, and no "database is locked" has been seen.
+It remains the one guard against concurrent Passenger workers colliding on
+writes, which is a failure that appears with users rather than in testing —
+so revisit if that error ever shows up in `logs/django.log`, and otherwise
+treat it as post-launch.
+
 
 ~~Blocked until 0.2 confirms the backup is WAL-safe.~~ **Unblocked**: the
 backup and restore are WAL-safe since www_installer v1.3.0. Make sure the server's
@@ -485,7 +506,7 @@ worker processes on deferred transactions is the classic route to "database is
 locked" even at low load. WAL also stops readers blocking writers — worth having
 at 50 users, but no longer the load-bearing reason for this phase.
 
-### [ ] 4.2 **[verify]** Confirm WAL is live and the backup round-trips
+### [ ] 4.2 **[verify]** Confirm WAL is live and the backup round-trips — **PARKED with 4.1**
 
 ```bash
 sqlite3 db.sqlite3 'PRAGMA journal_mode;'   # expect: wal
@@ -565,19 +586,44 @@ machine's 20 ms is mostly the 3x RTT, not server work.
 Done — the figures are in the table above. The pooled line landed where the old
 reused-connection figure predicted.
 
-### [ ] 4.5 **[verify]** Confirm the win in flight, not just in the probe
+### [x] 4.5 **[done]** Confirmed in flight — 2.9x
 
-Fly and read `state response status 200 in N ms` in `XPPython3Log.txt`. That is
-the line that read 593 ms; expect ~125–160 ms. The probe times `GET /`, not the
-state POST with a real payload, so this is the number that actually settles it.
+142 samples from a cruise leg, real 27-dataref payload, `state response status
+200 in N ms`:
 
-The `HTTP backlog full` warnings should also stop: at a 500 ms tick a 593 ms
-round trip could not keep up, and ~140 ms has room to spare.
+| | before | after |
+|---|---|---|
+| min | 593 ms (a hard floor) | **140 ms** |
+| **median** | 593 ms | **203 ms** |
+| p90 | — | 266 ms |
+| p99 | — | 359 ms |
+| max | — | 688 ms (one sample) |
 
-### [ ] 4.6 **[release]** Ship the pooling fix as a plugin release
+**One sample of 142 exceeded the 500 ms tick, and there were no `HTTP backlog
+full` warnings at all** — the flood that started this whole investigation is
+gone.
 
-The fix is only on the sim PC as a hand-copied file. It needs a plugin bump and
-release before the announce, or new users get the 593 ms path.
+2.9x rather than the 4.4x the probe suggested, and the gap is explained: the
+probe timed `GET /`, while `/state/` also carries 27 datarefs, evaluates rules
+and writes. On the dev machine that difference was ~30 ms; on the sim PC it is
+~65 ms, consistent with its 3x RTT making a larger request body cost more.
+
+The 688 ms outlier appears in the log as an interleave — the flight loop
+submitted a new snapshot while the worker was still in flight. One stall in
+142 ticks, absorbed by coalescing exactly as designed.
+
+> **A version-reporting trap this exposed.** The connect line read `plugin
+> v1.1.2` while running the pooled build: the pooling commit still carried
+> `PLUGIN_VERSION = "1.1.2"`, and the bump to 1.2.0 landed *after* the file was
+> hand-copied to the sim PC. Harmless until 2.10.0, where the derived window
+> would have shown an update banner for a plugin that was already current.
+> Fixed by re-copying. Worth remembering whenever the plugin is installed by
+> hand rather than from a release zip.
+
+### [x] 4.6 **[done]** Shipped as `plugin-v1.2.0`
+
+Tagged and released, so a new pilot downloading the plugin gets the pooled
+build rather than the 593 ms path.
 
 **Optional, not blocking**: the ~340 ms above is unidentified. A probe stage
 timing `load_verify_locations(certifi.where())` would confirm or kill the CA
