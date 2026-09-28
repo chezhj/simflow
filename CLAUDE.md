@@ -42,7 +42,7 @@ Settings are split into `smart_training_checklist/settings/`:
 - `dev.py` — `DEBUG=True`, uses a WireMock URL for SimBrief instead of the real API
 - `prod.py` — production overrides
 
-`pytest.ini` points at `settings.dev` automatically. The dev SimBrief URL hits a WireMock mock (`my-simbrief-mock.wiremockapi.cloud`) so tests never hit the real SimBrief API.
+`pytest.ini` points at `settings.dev` automatically. **`settings/dev.py` points `SIMBRIEF_URL` at the live SimBrief API** — a WireMock alternative is present but commented out. Tests are safe because they mock `requests.get`, not because the URL is fake; a test that forgets to mock it will reach the real service.
 
 `MOCK_TOKEN` is read from a `.env` file via `python-decouple` and sent as `X-Auth-Token` header to the mock API.
 

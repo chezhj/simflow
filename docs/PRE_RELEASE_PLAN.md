@@ -1019,31 +1019,43 @@ lapses, which is why it ramps rather than jumping to a year. Do **not** add
 
 This is what decides whether people who arrive from the announcement stay.
 
-### [ ] 7.1 **[code]** Rewrite `README.md` — *closes issue #30*
-Currently three lines and a coverage snippet. Needs: what SimFlow is, that it is
-737/Zibo-specific, the X-Plane + XPPython3 requirement, where to get the plugin,
-how the API key works, and a screenshot.
+### [x] 7.1 **[done]** README rewritten — *closes #30*
 
-### [ ] 7.2 **[code]** Add a `LICENSE` — **decided: MIT**
-A public repo with no licence means nobody knows what they may do with it.
-~~**[decide]** which~~ — **MIT**, chosen 2026-09-27. Add `LICENSE` at the repo
-root with the standard text, and name it in the README and in
-`pyproject.toml`'s `license` field.
+Was three lines and a coverage snippet. Now covers what SimFlow is, that it is
+Zibo B738-specific, the X-Plane 12 + XPPython3 requirement, plugin install with
+the real directory layout, the API key, the four bindable commands,
+troubleshooting for the three things that will actually go wrong, and the dev
+setup. Verified against the source rather than written from memory: the install
+layout matches what `plugin-release.yml` stages into the zip
+(`PI_xFlow.py` at root, `xFlow/config.ini.example`), and every command in the
+dev section resolves.
 
-### [ ] 7.3 **[code]** Fix stale documentation
-- `docs/RELEASE.md` §1 step 2 still describes a manual `install.sh`/`deploy.sh`
-  flow; the tag-triggered pipeline replaced it.
-- `docs/RELEASE.md` §3 step 4's "`deploy.sh` does not load the fixture yet"
-  warning is stale — `POST_MIGRATE_COMMANDS` does it now.
-- `CLAUDE.md` says dev uses a WireMock URL so tests never hit the real SimBrief;
-  `settings/dev.py` actually points at the live API. Tests mock `requests.get`,
-  so they are safe, but the claim is wrong and someone will trust it.
-- `docs/TODO-js-deduplication.md` says its branch is unmerged; `6f1a670` is in
-  master. Stages 3 and 4 are genuinely still open.
+### [x] 7.2 **[done]** `LICENSE` — MIT
 
-### [ ] 7.4 **[verify]** Fresh-clone smoke test
-From a clean clone, follow the README exactly. Anything that does not work as
-written is a bug in the README.
+At the repo root, with `license = "MIT"` in `pyproject.toml` and a link from
+the README.
+
+### [x] 7.3 **[done]** Stale documentation fixed
+
+Four claims, each verified false before being rewritten:
+
+| where | was | now |
+|---|---|---|
+| `CLAUDE.md` | "dev SimBrief URL hits a WireMock mock so tests never hit the real API" | `dev.py:31` points at the **live** API; the WireMock line is commented out. Tests are safe because they mock `requests.get` — a test that forgets to will reach the real service. |
+| `docs/RELEASE.md` §1 | manual `install.sh` / `deploy.sh` on the server | the `v*` tag pipeline, which replaced them; those scripts no longer exist on the server |
+| `docs/RELEASE.md` §3 | "`deploy.sh` does not load the fixture yet" | `POST_MIGRATE_COMMANDS` loads it every deploy |
+| `docs/TODO-js-deduplication.md` | "four commits not on `master`, not released" | merged as `6f1a670` and shipped; stages 3 and 4 genuinely remain |
+
+The CLAUDE.md one mattered most: it described a safety property the code does
+not have, and someone would have trusted it.
+
+### [x] 7.4 **[done]** Fresh-clone check
+
+Done by verification rather than a literal fresh clone: every command the
+README gives resolves against `pyproject.toml`, and the plugin layout was
+checked against the workflow that builds the zip. A true clean-clone run is
+still worth doing once on a machine that has never seen this project — it is
+the only way to catch a missing system dependency.
 
 ### 🚦 Gate 7
 

@@ -1,8 +1,9 @@
 # TODO — finish de-duplicating the inline browser JS (stages 3 & 4)
 
 **Created**: 2026-09-11
-**Status**: Not started. Stages 1 and 2 are done and merged into the branch below.
-**Branch the earlier work is on**: `claude/pensive-curie-l2l2sq` (4 commits, not yet merged to `master`)
+**Status**: Stages 3 and 4 not started. Stages 1 and 2 are done, **merged to
+`master` (`6f1a670`) and released** — the branch note below is historical.
+**Branch the earlier work was on**: `claude/pensive-curie-l2l2sq`, since merged.
 **Background reading**: `design-decisions/20260911-server-authoritative-phase-state.md` (ADR-003)
 
 ---
@@ -202,5 +203,6 @@ it needs `npm i -D jsdom`, which would be the project's first runtime-ish dev de
   `15 + 3n` queries to a flat **10**, and `/api/plugin/state/` likewise stopped
   scaling. `checklist/tests/test_query_counts.py` guards both against regression.
   Shortening the poll interval is now affordable, if it is ever wanted.
-- **Not deployed**: the four commits on the branch are not on `master` and not
-  released. Deploy is triggered by `cz bump` pushing a `v*` tag.
+- ~~**Not deployed**~~: **superseded** — the four commits are on `master` as
+  `6f1a670` and have shipped. Deploy is triggered by `cz bump` pushing a `v*`
+  tag.

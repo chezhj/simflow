@@ -31,12 +31,15 @@ Commitizen updates `smart_training_checklist/__init__.py` and `pyproject.toml`, 
 > deploy is triggered by the `v*` tag, that meant no deploy, with no error.
 > Check `git ls-remote --tags origin "v*"` if a release seems not to have shipped.
 
-**2. Deploy to production** (run on the prod server)
+**2. Deploy to production** — nothing to do; the tag does it.
 
-```
-install.sh app <version-tag>   # git pull / clone at that tag
-deploy.sh app <version-tag>    # stop, deploy new code, run migrations, start
-```
+`.github/workflows/release-deploy.yaml` runs on any `v*` tag: tests, GitHub
+release, rsync to the server, then `activate.sh` (backup → migrate →
+post-migrate commands → collectstatic → restart), a smoke test, and an
+automatic rollback if the smoke test fails.
+
+The manual `install.sh` / `deploy.sh` flow this section used to describe was
+replaced by that pipeline and no longer exists on the server.
 
 ---
 
@@ -144,14 +147,9 @@ The script:
 git push && git push origin sop-B738-v<new-version>
 ```
 
-**4. Deploy to production** (run on the prod server)
+**4. Deploy to production** — again, the `v*` tag does it. See §1.
 
-```
-install.sh app <version-tag>   # use the app tag that contains this commit
-deploy.sh app <version-tag>
-```
-
-> ⚠️ `deploy.sh` (in the separate deploy repo) does **not** load the fixture yet. Until it does, load it manually on prod after deploying:
+> **Superseded.** `POST_MIGRATE_COMMANDS` in `deploy/simflow_config.sh` runs `checklist_content import --prune --noinput` after every migrate, so the fixture loads itself. The manual step below is kept only for recovering an older release.
 > ```
 > python manage.py checklist_content import --prune
 > ```
