@@ -1,3 +1,17 @@
+## v2.10.0 (2026-09-28)
+
+### Feat
+
+- **plugin-window**: derive the compatibility window, and bound the gate cache
+- **auth**: throttle failed sign-ins with django-axes
+- **errors**: custom 404, 500 and CSRF-failure pages
+- **maintenance**: retention for flight sessions, logs and expired sessions
+
+### Fix
+
+- **prune-dry-run**: the log-file count was about the wrong computer
+- **prune-dry-run**: release the database handle before cleaning up
+
 ## v2.9.0 (2026-09-27)
 
 ### Feat
