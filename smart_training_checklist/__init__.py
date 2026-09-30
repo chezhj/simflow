@@ -1,2 +1,2 @@
 """default"""
-__version__ = "2.10.0"
+__version__ = "2.10.1"

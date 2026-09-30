@@ -1,3 +1,9 @@
+## v2.10.1 (2026-09-30)
+
+### Fix
+
+- **maintenance**: the dry run under-reported the cascade by a whole table
+
 ## v2.10.0 (2026-09-28)
 
 ### Feat
