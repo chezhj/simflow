@@ -1732,6 +1732,23 @@
   margin-bottom: 20px;
 }
 
+/* Card spacing modifiers. These exist so profile.html does not need inline
+   styles — CLAUDE.md allows exactly one, background-color on attribute badge
+   buttons, and these four were the only violations left. */
+.card--flush {
+  margin-bottom: 0;
+}
+
+.card--spaced {
+  margin-top: 20px;
+}
+
+/* A form that must not break the line it sits on — used to put a submit
+   button inline with surrounding text. */
+.form-inline {
+  display: inline;
+}
+
 .card-header {
   padding: 12px 20px;
   border-bottom: 1px solid var(--color-border);

@@ -1084,8 +1084,42 @@ the only way to catch a missing system dependency.
 
 ## Phase 8 — Release
 
-### [ ] 8.1 **[verify]** Full check
-`pytest` (388+), `npm test` (16), `manage.py check --deploy`, `djlint checklist/templates/`.
+### [x] 8.1 **[done]** Full check
+
+| check | result |
+|---|---|
+| `pytest` | **540 passed** |
+| `npm test` | **20 passed** |
+| `djlint checklist/templates/` | **0 errors** (was 5) |
+| `manage.py check --deploy` | 3 warnings, all accounted for below |
+
+djlint was cleared rather than accepted: `profile.html` carried four inline
+styles, which CLAUDE.md permits in exactly one place — `background-color` on
+attribute badge buttons — so they were genuine violations of the project's own
+rule. Replaced with `.card--flush`, `.card--spaced` and `.form-inline`. A
+project-wide grep now finds no inline style outside the sanctioned one.
+
+The three `check --deploy` warnings:
+
+| warning | verdict |
+|---|---|
+| `W005` no `SECURE_HSTS_INCLUDE_SUBDOMAINS` | **deliberate** — would take out any non-HTTPS host under `vdwaal.net` (6.3) |
+| `W021` no `SECURE_HSTS_PRELOAD` | **deliberate** — preload needs includeSubDomains and a year, and submission to the browser preload list is effectively permanent |
+| `W009` weak `SECRET_KEY` | **an artifact of how this was run**, not a finding: the check was run here with a dummy key because the real one lives in the server `.env`. **Re-run on the server to confirm the live key is strong** — see below. |
+
+The `SECRET_KEY` warning is the only one that still needs checking, and it can
+only be answered where the real key is:
+
+```bash
+source ~/virtualenv/domains/simflow.vdwaal.net/3.11/bin/activate
+cd ~/domains/simflow.vdwaal.net
+DJANGO_SETTINGS_MODULE=smart_training_checklist.settings.prod \
+  python manage.py check --deploy
+```
+
+Expect W005 and W021 only. If W009 appears there, the live key is weak and
+should be regenerated — note that doing so invalidates all sessions and
+password-reset links, so it is a log-everyone-out event.
 
 ### [ ] 8.2 **[decide]** Content version
 If any fixture content moved, `scripts/check_content_bump.py` will refuse the

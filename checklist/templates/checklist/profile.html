@@ -5,8 +5,6 @@
 {% block content %}
 <div class="setup-inner">
 
-
-
   {# ── OFP mismatch banner ────────────────────────────────────────── #}
   {% if ofp_mismatch and active_flight_session %}
   <div class="ofp-mismatch-banner">
@@ -17,7 +15,7 @@
       <strong>{{ active_flight_session.flight_info.origin_icao|default:"?" }} → {{ active_flight_session.flight_info.destination_icao|default:"?" }}</strong>
     </div>
     <div class="ofp-mismatch-actions">
-      <form method="post" action="{% url 'checklist:start' %}" style="display:inline">
+      <form method="post" action="{% url 'checklist:start' %}" class="form-inline">
         {% csrf_token %}
         <input type="hidden" name="action" value="new_flight">
         <button type="submit" class="btn-setup-primary">Start new flight</button>
@@ -91,7 +89,7 @@
     <div class="two-col">
 
       {# Left column: Conditions (flight-specific) #}
-      <div class="card" style="margin-bottom:0">
+      <div class="card card--flush">
         <div class="card-header">
           <span class="card-header-title">Conditions</span>
         </div>
@@ -113,7 +111,7 @@
       </div>
 
       {# Right column: General (user preferences) #}
-      <div class="card" style="margin-bottom:0">
+      <div class="card card--flush">
         <div class="card-header">
           <span class="card-header-title">General</span>
         </div>
@@ -137,7 +135,7 @@
     </div>{# /.two-col #}
 
     {# Cockpit section #}
-    <div class="card" style="margin-top:20px">
+    <div class="card card--spaced">
       <div class="card-header">
         <span class="card-header-title">Cockpit</span>
       </div>
