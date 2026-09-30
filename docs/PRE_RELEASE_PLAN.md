@@ -996,20 +996,41 @@ HSTS ramp), then Phase 7 — the actual announce blocker.
 
 ## Phase 6 — Production hardening — *depends on 0.3*
 
-### [ ] 6.1 **[server]** Set `SECURE_PROXY_SSL_HEADER` if 0.3 requires it
-Already stubbed in `prod.py`; uncomment only if 0.3 showed `is_secure=False`
-with a usable forwarded header.
+### [x] 6.1 **[not needed]** `SECURE_PROXY_SSL_HEADER`
 
-### [ ] 6.2 **[server]** Enable `SECURE_SSL_REDIRECT`
-Set in `.env` once 0.3 confirms Django sees requests as secure. Verify
-immediately afterwards that the site still loads — this is the setting that
-loops if the answer was wrong.
+Stays commented out in `prod.py`. 0.3 established Django already sees requests
+as secure, and 6.2 enabling cleanly without a redirect loop confirms it — a
+loop would have been the symptom if the header were needed.
 
-### [ ] 6.3 **[server]** Ramp HSTS
-`SECURE_HSTS_SECONDS`, in stages: `3600` → one day → one week → one year,
-checking the site between each. Browsers honour it even if the certificate later
-lapses, which is why it ramps rather than jumping to a year. Do **not** add
-`includeSubDomains` until every host under `vdwaal.net` is HTTPS.
+### [x] 6.2 **[done]** `SECURE_SSL_REDIRECT=True`
+
+Set in the server `.env`, site verified loading afterwards. This was the
+setting that could have taken the site down for everyone at once: without a
+scheme Django trusts, every request looks insecure and the 301 loops.
+
+### [~] 6.3 **[in progress]** HSTS ramp — currently at **86400** (one day)
+
+| stage | value | status |
+|---|---|---|
+| 1 hour | `3600` | done |
+| 1 day | `86400` | **current** |
+| 1 week | `604800` | next |
+| 1 year | `31536000` | final |
+
+Ramped rather than jumped because HSTS is the one setting that cannot be taken
+back: browsers honour it for the full duration even if the certificate later
+lapses or the app moves, and there is no way to tell visitors to purge it. An
+hour is a cheap mistake; a year is not.
+
+`includeSubDomains` is deliberately **not** set, and must not be until every
+host under `vdwaal.net` is HTTPS — it would take out any sibling that is not.
+
+Verify at each stage:
+
+```bash
+curl -sSI http://simflow.vdwaal.net/ | head -3                  # expect 301 -> https
+curl -sSI https://simflow.vdwaal.net/ | grep -i strict-transport
+```
 
 ### 🚦 Gate 6
 
