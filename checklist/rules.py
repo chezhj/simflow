@@ -364,5 +364,10 @@ def evaluate_rule(rule: dict, state: dict) -> bool:
         except TypeError:
             return False
 
+    # A type mismatch (e.g. a string dataref against a numeric value) is a rule
+    # authoring error; treat it as unsatisfied rather than failing the request.
     fn = _OPS.get(op)
-    return fn is not None and fn(state[dataref], compare_val)
+    try:
+        return fn is not None and fn(state[dataref], compare_val)
+    except TypeError:
+        return False

@@ -301,3 +301,22 @@ class TestCorridorCollectLeafEvaluations(unittest.TestCase):
         self.assertIsNone(leaf["along_m"])
         self.assertIsNone(leaf["cross_m"])
         self.assertFalse(leaf["result"])
+
+
+class TestTypeMismatch(unittest.TestCase):
+    """A string dataref compared against a number must not raise (prod 500 on
+    /api/plugin/state/ from the Fix/Rings rule)."""
+
+    RULE = {"dataref": "laminar/B738/nd/fix_dist_00_00", "op": "gt", "value": 0}
+
+    def test_ordering_op_on_string_is_false(self):
+        self.assertFalse(evaluate_rule(self.RULE, {"laminar/B738/nd/fix_dist_00_00": "10.0"}))
+
+    def test_type_mismatch_inside_all_is_false(self):
+        rule = {"all": [self.RULE]}
+        self.assertFalse(evaluate_rule(rule, {"laminar/B738/nd/fix_dist_00_00": "10.0"}))
+
+    def test_not_empty_on_string_dataref(self):
+        rule = {"dataref": "laminar/B738/nd/fix_dist_00_00", "op": "neq", "value": ""}
+        self.assertTrue(evaluate_rule(rule, {"laminar/B738/nd/fix_dist_00_00": "10.0"}))
+        self.assertFalse(evaluate_rule(rule, {"laminar/B738/nd/fix_dist_00_00": ""}))

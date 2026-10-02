@@ -4992,13 +4992,13 @@
         "all": [
           {
             "dataref": "laminar/B738/nd/fix_dist_00_00",
-            "op": "gt",
-            "value": 0
+            "op": "neq",
+            "value": ""
           },
           {
             "dataref": "laminar/B738/nd/fix_dist_00_01",
-            "op": "gt",
-            "value": 0
+            "op": "neq",
+            "value": ""
           }
         ]
       },
