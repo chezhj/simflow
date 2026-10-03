@@ -1,3 +1,9 @@
+## v2.10.2 (2026-10-03)
+
+### Fix
+
+- **rules**: string dataref against a number no longer 500s plugin state
+
 ## v2.10.1 (2026-09-30)
 
 ### Fix
