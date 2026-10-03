@@ -5,9 +5,9 @@
     "fields": {
       "name": "Boeing 737-800",
       "icao_code": "B738",
-      "content_version": "1.4.0",
-      "release_notes": "- changed several small items in the checklist see commits",
-      "updated_at": "2026-09-17T17:41:32.867362Z"
+      "content_version": "1.4.1",
+      "release_notes": "- Fixed typo in evaluation rul for fix-es",
+      "updated_at": "2026-10-03T08:26:46.991505Z"
     }
   },
   {
