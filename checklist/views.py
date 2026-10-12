@@ -93,6 +93,25 @@ def _require_all_visible(active_attr_ids) -> bool:
     return attr_id is not None and attr_id in set(active_attr_ids)
 
 
+def _keep_screen_on(flight_session) -> bool:
+    """True when the KeepScreenOn preference is active for the flight session.
+
+    Drives the client-side screen wake lock on every in-flight page (procedure
+    detail and idle), so the screen does not sleep between procedures.
+    """
+    attr_id = (
+        Attribute.objects.filter(title="KeepScreenOn")
+        .values_list("id", flat=True)
+        .first()
+    )
+    return (
+        attr_id is not None
+        and FlightSessionAttribute.objects.filter(
+            flight_session=flight_session, attribute_id=attr_id, is_active=True
+        ).exists()
+    )
+
+
 def _get_user_default_ids(user_profile) -> set[int]:
     """Return the set of Attribute IDs saved as defaults for the given user profile."""
     if user_profile is None:
@@ -787,17 +806,9 @@ def procedure_detail(request, slug=None, pk=None):
     all_procedures = list(Procedure.objects.order_by("step"))
     conditional_proc_slugs = [p.slug for p in all_procedures if p.show_rule is not None]
 
-    # Client-side screen wake lock preference (KeepScreenOn attribute, if active).
-    keep_screen_on_attr_id = (
-        Attribute.objects.filter(title="KeepScreenOn")
-        .values_list("id", flat=True)
-        .first()
-    )
-    keep_screen_on = keep_screen_on_attr_id in active_attr_ids
-
     context = {
         "procedure": procedure2view,
-        "keep_screen_on": keep_screen_on,
+        "keep_screen_on": _keep_screen_on(flight_session),
         "check_items": check_items,
         "nextproc": nextproc,
         "prevproc": prevproc,
@@ -892,6 +903,7 @@ def idle_view(request):
         "has_conditional_procs": bool(conditional_proc_slugs),
         "next_linear_proc": next_linear_proc,
         "flight_session": flight_session,
+        "keep_screen_on": _keep_screen_on(flight_session),
         "poll_interval_ms": settings.POLL_INTERVAL_MS,
     }
     return TemplateResponse(request, "checklist/idle.html", context)
