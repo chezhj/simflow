@@ -1,3 +1,9 @@
+## v2.10.3 (2026-10-12)
+
+### Fix
+
+- **idle**: keep screen on during the idle page too (#38)
+
 ## v2.10.2 (2026-10-03)
 
 ### Fix
