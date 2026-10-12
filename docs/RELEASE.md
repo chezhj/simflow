@@ -4,7 +4,7 @@ Three independent release processes share one mono-repo. Each has its own versio
 
 | Artefact | Tag format | Tool |
 |---|---|---|
-| Web app | `v*` | `cz bump` |
+| Web app | `v*` | Release workflow (GitHub Actions) |
 | X-Plane plugin | `plugin-v*` | `scripts/bump_plugin.py` |
 | Checklist content (SOP) | `sop-{icao}-v*` | `scripts/bump_content_version.py` |
 
@@ -13,33 +13,47 @@ Three independent release processes share one mono-repo. Each has its own versio
 ## 1. Web app release
 
 ### Prerequisites
-- Working tree is clean on `master`, all tests pass (`pytest`).
+- The changes are merged to `master` through PRs with conventional-commit titles (see `CLAUDE.md`, "Commits, PR titles and releasing").
+- If the release contains migrations, take a database dump first: the automatic rollback restores code, not data.
+- If `checklist/fixtures/checklist_content.json` changed, `content_version` was bumped (section 3), otherwise the bump job refuses.
 
 ### Steps
 
-**1. Bump version and push**
+**1. Run the Release workflow**
 
-```
-cz bump
-```
+GitHub → Actions → **Release** → Run workflow, on `master`. Leave `increment` on `auto`.
 
-Commitizen updates `smart_training_checklist/__init__.py` and `pyproject.toml`, appends an entry to `CHANGELOG.md`, creates a commit and tag (`v<new>`), then runs its `post_bump_hooks`: `git push` followed by `git push --tags`.
+The workflow:
+1. runs CI (`ci.yaml`: `manage.py check`, `pytest`, JS helper tests);
+2. warns (never fails) about commits since the last tag that `cz bump` cannot read;
+3. runs Commitizen: `scripts/check_content_bump.py`, then the version bump in `pyproject.toml` and `smart_training_checklist/__init__.py`, a new `CHANGELOG.md` section, the bump commit and the `v<new>` tag, pushed by the workflow itself;
+4. calls `release-deploy.yaml` for that tag.
 
-> Both commands are needed. Commitizen creates **lightweight** tags, and
-> `git push --follow-tags` pushes only *annotated* ones — so the old
-> `push_all` hook pushed the commit and silently skipped the tag. Since the
-> deploy is triggered by the `v*` tag, that meant no deploy, with no error.
-> Check `git ls-remote --tags origin "v*"` if a release seems not to have shipped.
+With no bumpable commit (`feat`, `fix`, `refactor`, `perf` or a breaking change) since the last tag, the run ends with "Nothing to release" and nothing is pushed or deployed. Choose `increment: PATCH` or `MINOR` only to force a release in that case.
 
-**2. Deploy to production** — nothing to do; the tag does it.
+**2. Deploy to production** — step 1 does it.
 
-`.github/workflows/release-deploy.yaml` runs on any `v*` tag: tests, GitHub
+`.github/workflows/release-deploy.yaml` (display name "Build & Deploy"): tests, GitHub
 release, rsync to the server, then `activate.sh` (backup → migrate →
 post-migrate commands → collectstatic → restart), a smoke test, and an
 automatic rollback if the smoke test fails.
 
 The manual `install.sh` / `deploy.sh` flow this section used to describe was
 replaced by that pipeline and no longer exists on the server.
+
+**Fallback: bumping by hand**
+
+A local `cz bump` still bumps, commits and tags (and runs the content check) but
+**pushes nothing**: `post_bump_hooks` is only an echo. To ship it:
+
+```
+git push && git push --tags
+```
+
+Both commands are needed. Commitizen creates **lightweight** tags, and
+`git push --follow-tags` pushes only *annotated* ones. The pushed `v*` tag triggers
+`release-deploy.yaml` directly. Check `git ls-remote --tags origin "v*"` if a release
+seems not to have shipped. Do not use this alongside the Release workflow for the same version.
 
 ---
 
@@ -108,13 +122,13 @@ Users download from `https://github.com/chezhj/simflow/releases`.
 
 ### Steps
 
-> `cz bump` refuses to release when the fixture's content has changed but
+> The bump (Release workflow or local `cz bump`) refuses to release when the fixture's content has changed but
 > `content_version` has not — `scripts/check_content_bump.py`, wired as commitizen's
 > `pre_bump_hooks`. It names the rows that moved and the commit that set the current
 > version. Because commitizen writes the version files before running the hook, an
 > abort leaves `pyproject.toml`, `smart_training_checklist/__init__.py` and
 > `CHANGELOG.md` modified but uncommitted and untagged; the message prints the
-> `git restore` line. Deliberate exception: `SIMFLOW_SKIP_CONTENT_CHECK=1 cz bump`.
+> `git restore` line. Deliberate exception for a local bump: `SIMFLOW_SKIP_CONTENT_CHECK=1 cz bump`. The Release workflow has no such override: its bump job fails before any commit or tag exists; bump `content_version` and run it again.
 
 **1. Edit the fixture**
 
@@ -147,7 +161,7 @@ The script:
 git push && git push origin sop-B738-v<new-version>
 ```
 
-**4. Deploy to production** — again, the `v*` tag does it. See §1.
+**4. Deploy to production** — run the Release workflow. See §1.
 
 > **Superseded.** `POST_MIGRATE_COMMANDS` in `deploy/simflow_config.sh` runs `checklist_content import --prune --noinput` after every migrate, so the fixture loads itself. The manual step below is kept only for recovering an older release.
 > ```

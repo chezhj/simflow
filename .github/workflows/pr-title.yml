@@ -1,0 +1,59 @@
+name: PR title
+
+# PRs are squash-merged, so the PR title becomes the one commit on master, and that is
+# the only thing `cz bump` reads to pick the version and write the changelog. A title
+# bump cannot parse (e.g. "Follow-up: fix things") silently produces no release.
+#
+# Job `pr-title` shows green/red on the PR and re-runs when the title is edited. It is
+# meant to be a required check (Settings > Rules > Rulesets); until that ruleset exists a
+# red check does not block the merge button. The rules live here and in CLAUDE.md.
+
+on:
+  pull_request:
+    types: [opened, edited, synchronize, reopened]
+
+permissions:
+  contents: read
+
+jobs:
+  pr-title:
+    name: pr-title
+    runs-on: ubuntu-latest
+    env:
+      # Passed through the environment, never interpolated into the script: a title is
+      # untrusted input.
+      PR_TITLE: ${{ github.event.pull_request.title }}
+    steps:
+      # Checked out so commitizen reads the same [tool.commitizen] config as `cz bump`.
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.11"
+
+      - name: Install commitizen
+        run: pip install "commitizen>=4,<5"
+
+      - name: Conventional commit format
+        run: cz check --message "${PR_TITLE}"
+
+      # `cz check` also lets Merge / Revert / Pull request / fixup! / squash! titles
+      # through (they are on its allowed-prefix list), but `cz bump` ignores them. It does
+      # not enforce the style rules from CLAUDE.md either, so do that here.
+      # It cannot judge whether the TYPE is right: `fix` on a PR that adds a feature
+      # costs the minor bump.
+      - name: Bumpable and style rules
+        run: |
+          fail() { echo "::error title=PR title::$1"; exit 1; }
+
+          case "${PR_TITLE}" in
+            "Merge"* | "Revert"* | "Pull request"* | "fixup!"* | "squash!"*)
+              fail "Titles starting with Merge/Revert/Pull request/fixup!/squash! are not read by cz bump. Use feat/fix/refactor/... instead." ;;
+          esac
+
+          subject="${PR_TITLE#*: }"
+          [ "${#PR_TITLE}" -le 72 ]      || fail "Title is ${#PR_TITLE} characters; keep it at 72 or fewer."
+          [[ "${subject}" =~ ^[a-z0-9] ]] || fail "Subject must start with a lowercase letter or digit: '${subject}'."
+          [[ "${subject}" != *. ]]        || fail "Subject must not end with a period."
+
+          echo "OK: ${PR_TITLE}"

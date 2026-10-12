@@ -36,8 +36,9 @@ py -m coverage lcov
 # Lint Django templates
 djlint checklist/templates/
 
-# Bump version (uses commitizen + post-hook to push)
-cz bump
+# Releases come from the Release workflow on GitHub, not from a local `cz bump` (see "Releasing")
+# Check a commit message / PR title the way the pr-title check does
+cz check --message "feat(scope): subject"
 ```
 
 ## Settings
@@ -55,19 +56,19 @@ Settings are split into `smart_training_checklist/settings/`:
 
 ## Deployment
 
-Deploys are automated via GitHub Actions and triggered by pushing a `v*` tag — which `cz bump` does for you (its `post_bump_hooks` run `git push` then `git push --tags`; both are needed because commitizen creates lightweight tags, which `--follow-tags` will not push). The pipeline runs tests, creates a GitHub release, ships the built tree to the cPanel/CloudLinux server (`simflow.vdwaal.net` on `/home/vdwanet`), then activates it with an automatic smoke test and rollback.
+Deploys are automated via GitHub Actions. The **Release workflow** (see "Releasing") bumps the version, tags `v<version>` and calls the deploy pipeline for that tag; pushing a `v*` tag by hand also deploys (manual fallback). The pipeline runs tests, creates a GitHub release, ships the built tree to the cPanel/CloudLinux server (`simflow.vdwaal.net` on `/home/vdwanet`), then activates it with an automatic smoke test and rollback.
 
 Three moving parts:
 
 | Part | Where | Role |
 |---|---|---|
-| `.github/workflows/release-deploy.yaml` | this repo | Self-contained pipeline: test → release → rsync ship → activate/smoke/rollback. Trigger: `v*` tags only (`plugin-v*` / `sop*` do **not** match). |
+| `.github/workflows/release-deploy.yaml` | this repo | Self-contained pipeline (display name "Build & Deploy"): test → release → rsync ship → activate/smoke/rollback. Triggers: `workflow_call` from `release.yml` with a `version` input, and pushed `v*` tags as a manual fallback (`plugin-v*` / `sop*` do **not** match). `TAG` (`inputs.version || github.ref_name`) is the one source for which release is built; every checkout uses `ref: ${{ env.TAG }}`. |
 | `deploy/simflow_config.sh` | this repo | Secret-free per-app config, rsynced to `~/domains/simflow_config.sh` each deploy. Sets `DOMAIN`, `PYTHON_ENV`, `DJANGO_SETTINGS_MODULE=…settings.prod`, `DATABASE_SOURCE=production`, `POST_MIGRATE_COMMANDS`, `SMOKE_URL`. |
 | `~/deploy-tools/scripts/{activate,rollback}.sh` | server (from [`www_installer`](https://github.com/chezhj/www_installer)) | Bring a shipped release live: symlink shared `db.sqlite3`/`.env`, back up DB, `migrate`, run post-migrate commands, `collectstatic`, restart. Clone-bootstrapped by the workflow if missing. |
 
 **Persistent state** (`db.sqlite3`, `.env`) lives in `~/domains/shared/simflow/` and is symlinked into each release, so it survives deploys. Because `DATABASE_SOURCE=production`, the live DB is backed up before every `migrate`.
 
-**Checklist content ships with the app**: after `migrate`, `POST_MIGRATE_COMMANDS` runs `checklist_content import --prune --noinput`, which upserts the content tables from `checklist/fixtures/checklist_content.json` in that release and then deletes the rows that fixture no longer carries. Edit content via the fixture (see the content workflow), not the destructive export. A fixture edit requires a `content_version` bump: `cz bump` runs `scripts/check_content_bump.py` first and refuses the release when the content hash moved but the version did not.
+**Checklist content ships with the app**: after `migrate`, `POST_MIGRATE_COMMANDS` runs `checklist_content import --prune --noinput`, which upserts the content tables from `checklist/fixtures/checklist_content.json` in that release and then deletes the rows that fixture no longer carries. Edit content via the fixture (see the content workflow), not the destructive export. A fixture edit requires a `content_version` bump: the bump (`cz bump`, which the Release workflow runs) first runs `scripts/check_content_bump.py` and refuses the release when the content hash moved but the version did not. The Release workflow has no `SIMFLOW_SKIP_CONTENT_CHECK` override; bump `content_version` and run it again.
 
 The import is deliberately not a wipe-and-reload. `Attribute`, `Procedure` and `CheckItem` are referenced with CASCADE by `UserAttributeDefault`, `FlightSessionAttribute` and `FlightItemState`, so deleting a row that is about to be re-created destroys saved preferences and in-flight progress — which is exactly what happened on every deploy before the import was rewritten. Rows that survive keep their pk and are updated in place; a delete now means the content is genuinely gone, and the cascade that follows is intended. Two rules the fixture must honour, both enforced by pre-flight validation that aborts before writing: never recycle a pk, and every reference must resolve to a row that survives the import. `checklist_content import --prune --dry-run` reports the add/update/delete plan without writing.
 
@@ -79,6 +80,37 @@ The import is deliberately not a wipe-and-reload. `Attribute`, `Procedure` and `
 cd ~/domains && ~/deploy-tools/scripts/rollback.sh simflow
 # add --restore-db to also revert data if a migration ran
 ```
+
+---
+
+## Commits, PR titles and releasing
+
+### Commit and PR-title style (commitizen)
+
+`CHANGELOG.md` and the version are generated from conventional commits (`cz_conventional_commits`, tag `v$version`). PRs are squash-merged, so the **PR title becomes the one commit on `master`** and is the only thing `cz bump` reads:
+
+    <type>(<scope>): <subject>
+
+- Subject: lowercase (or a digit) first, imperative, no trailing period; the whole title at most 72 characters (the squash adds ` (#N)`). Scope is optional but preferred.
+- `feat` → minor bump. `fix`, `refactor`, `perf` → patch bump. `docs`, `chore`, `test`, `build`, `ci`, `style` → no bump. `!` / `BREAKING CHANGE` only for genuinely breaking changes.
+- The `pr-title` workflow runs `cz check --message` on every PR (and again when the title is edited) and also rejects titles starting with `Merge`, `Revert`, `Pull request`, `fixup!` or `squash!` (commitizen accepts them, `cz bump` ignores them) plus the style rules above. It cannot judge whether the *type* is right: `fix` on a PR that adds a feature costs the minor bump, so pick it deliberately.
+- Check a title before opening the PR: `cz check --message "feat(menu): add a thing"`.
+- Always squash-merge, and keep Settings → General → Pull requests → default squash commit message on "Pull request title".
+
+### The checks
+
+`test` (CI: `manage.py check` + `pytest`, plus the `js` job) and `pr-title` run on every PR. This repo is public, so a ruleset *can* enforce them: add one on `master` that requires `test` and `pr-title`, with `github-actions[bot]` (the Release bump commit) and the repo admin (the plugin/SOP scripts push straight to `master`) as bypass actors. **Until that ruleset exists nothing blocks the merge button**, so look at the checks before squash-merging and do not merge on red.
+
+### Releasing
+
+- Web-app releases are made by the **Release workflow** (GitHub: Actions → Release → Run workflow, on `master`). It runs `ci.yaml`, then `commitizen-action` (bump, `CHANGELOG.md`, commit, `v*` tag, push), then `release-deploy.yaml` for that tag. Do not run `cz bump` or create tags locally for a normal release.
+- `increment`: leave it on `auto` so the version comes from the conventional commits since the last tag. Choose `PATCH` or `MINOR` only to force a release when nothing bumpable has landed. With nothing to bump the run ends with "Nothing to release" and pushes and deploys nothing.
+- A warning step lists commits since the last tag that `cz bump` cannot read (a bad title that slipped through, a direct push, a `tools:`-style type). It only warns; those commits are missing from the bump and the changelog.
+- A local `cz bump` still works (it bumps, commits and tags, and runs the content-version check) but pushes nothing; `post_bump_hooks` is only an echo. To ship such a bump by hand: `git push && git push --tags`; the pushed `v*` tag deploys.
+- Take a database dump *before* a release that contains migrations: the automatic rollback restores code, not the database.
+- Do not hand-write changelog text under a version header: the workflow generates it. Fix-ups go through a `docs(changelog): ...` PR.
+- Plugin (`plugin-v*`) and SOP (`sop-*`) releases are separate and unchanged, see `docs/RELEASE.md`.
+- Never push to `master` directly for a web-app change; work on a branch and open a PR.
 
 ---
 

@@ -55,14 +55,17 @@ pre_bump_hooks = [
   "python scripts/check_content_bump.py",
 ]
 
-# Run inline rather than calling a machine-local `push_all` script: that script
-# lived outside the repo, so when it stopped working the release silently pushed
-# the commit without the tag — and the tag is what triggers the deploy.
-# Two commands because commitizen creates LIGHTWEIGHT tags, which
-# `git push --follow-tags` does not push (it only follows annotated ones).
+# Releases are made by the Release workflow (Actions > Release > Run workflow), which
+# pushes the bump commit and the tag itself and then deploys that tag. This hook only
+# reminds anyone who runs `cz bump` locally that nothing is pushed.
+# If you do bump locally anyway, push the commit AND the tag (commitizen creates
+# lightweight tags, which `git push --follow-tags` does not push):
+#   git push && git push --tags
+# The pushed v* tag deploys through release-deploy.yaml's tag trigger (manual fallback).
+# No quotes or shell operators in the message: commitizen runs hooks through the
+# platform shell, and on Windows cmd.exe a && inside quotes would still split the command.
 post_bump_hooks = [
-  "git push",
-  "git push --tags",
+  "echo Bumped locally - nothing was pushed. Releases normally come from the Release workflow on GitHub.",
 ]
 
 [tool.poetry.requires-plugins]

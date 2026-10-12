@@ -1,4 +1,4 @@
-name: Release & Deploy
+name: Build & Deploy
 
 # SELF-CONTAINED deploy pipeline — copy this whole file into <app-repo>/.github/workflows/
 # and edit the marked per-repo values. It has no dependency on any workflow in another
@@ -10,10 +10,24 @@ name: Release & Deploy
 # Requires SSH_* secrets on THIS repo (Settings > Secrets and variables > Actions):
 #   SSH_HOST, SSH_USER, SSH_PRIVATE_KEY, SSH_KNOWN_HOSTS, and optionally SSH_PORT.
 
+# Two ways in:
+#   * workflow_call     - from release.yml, right after Commitizen created the tag.
+#                         A tag pushed with GITHUB_TOKEN triggers nothing, so the caller
+#                         chains this workflow explicitly and passes the tag as `version`.
+#   * push of a tag v*  - manual fallback (tag created and pushed by hand). plugin-v* and
+#                         sop-* tags do not match.
+# TAG below is the single source for "which release is this": the `version` input when
+# called, the pushed tag otherwise. Every job checks out that tag, never the caller's ref.
 on:
   push:
     tags:
       - "v*"
+  workflow_call:
+    inputs:
+      version:
+        description: "Tag to release and deploy, e.g. v2.11.0 (as created by Commitizen)"
+        type: string
+        required: true
 
 permissions:
   contents: write
@@ -24,6 +38,7 @@ concurrency:
   cancel-in-progress: false
 
 env:
+  TAG: ${{ inputs.version || github.ref_name }}
   APP: simflow # <-- EDIT: the <app> argument for activate.sh/rollback.sh
   VERSION_FILE: smart_training_checklist/__init__.py # <-- EDIT: file carrying __version__ = "X.Y.Z"
   # URL of the deploy-tools repo cloned onto the server if not already present.
@@ -35,6 +50,8 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
+        with:
+          ref: ${{ env.TAG }}
 
       - uses: actions/setup-python@v7
         with:
@@ -43,9 +60,9 @@ jobs:
       - name: Tag matches __version__
         run: |
           file_version="v$(grep -oP '__version__ = "\K[^"]+' "${VERSION_FILE}")"
-          echo "tag=${GITHUB_REF_NAME} file=${file_version}"
-          if [ "${file_version}" != "${GITHUB_REF_NAME}" ]; then
-            echo "::error::Tag ${GITHUB_REF_NAME} does not match ${VERSION_FILE} (${file_version})"
+          echo "tag=${TAG} file=${file_version}"
+          if [ "${file_version}" != "${TAG}" ]; then
+            echo "::error::Tag ${TAG} does not match ${VERSION_FILE} (${file_version})"
             exit 1
           fi
 
@@ -67,13 +84,14 @@ jobs:
     steps:
       - uses: actions/checkout@v7
         with:
+          ref: ${{ env.TAG }}
           fetch-depth: 0
       - name: Create release
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          gh release create "${GITHUB_REF_NAME}" \
-            --title "${GITHUB_REF_NAME}" \
+          gh release create "${TAG}" \
+            --title "${TAG}" \
             --generate-notes
 
   ship:
@@ -82,6 +100,8 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
+        with:
+          ref: ${{ env.TAG }}
 
       - uses: actions/setup-python@v7
         with:
@@ -95,7 +115,7 @@ jobs:
       - name: Attach requirements.txt to the release
         env:
           GH_TOKEN: ${{ github.token }}
-        run: gh release upload "${GITHUB_REF_NAME}" requirements.txt --clobber
+        run: gh release upload "${TAG}" requirements.txt --clobber
 
       - name: Configure SSH
         run: |
@@ -140,7 +160,7 @@ jobs:
             --exclude 'xChecklist-structure.txt' \
             --exclude 'CLAUDE.md' \
             -e "ssh -i ~/.ssh/id_deploy -p ${SSH_PORT:-22}" \
-            ./ "${SSH_USER}@${SSH_HOST}:domains/releases/${APP}_${GITHUB_REF_NAME}/"
+            ./ "${SSH_USER}@${SSH_HOST}:domains/releases/${APP}_${TAG}/"
 
           # Ship the deploy config (kept in this repo under deploy/<app>_config.sh).
           rsync -az \
@@ -182,7 +202,7 @@ jobs:
           SSH_PORT: ${{ secrets.SSH_PORT }}
         run: |
           ssh -i ~/.ssh/id_deploy -p "${SSH_PORT:-22}" "${SSH_USER}@${SSH_HOST}" \
-            "bash -lc 'cd ~/domains && ~/deploy-tools/scripts/activate.sh ${APP} ${GITHUB_REF_NAME}'"
+            "bash -lc 'cd ~/domains && ~/deploy-tools/scripts/activate.sh ${APP} ${TAG}'"
 
       - name: Smoke test
         id: smoke
