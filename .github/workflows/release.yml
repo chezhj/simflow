@@ -1,0 +1,158 @@
+name: Release
+
+# Started by hand: Actions > Release > "Run workflow" (on master).
+#   test   -> the CI workflow (ci.yaml)
+#   bump   -> Commitizen bumps the version, updates the changelog, commits and tags
+#   deploy -> the build / release / deploy pipeline (release-deploy.yaml), for the new tag
+#
+# This is the web-app release only. Plugin (plugin-v*) and SOP (sop-*) releases stay on
+# their own scripts and tags, see docs/RELEASE.md.
+#
+# Take a database dump BEFORE starting a release that contains migrations: the automatic
+# rollback restores the code, not the database.
+#
+# Only GITHUB_TOKEN is used. A tag pushed with GITHUB_TOKEN does not trigger other
+# workflows, which is why the deploy is chained here instead of relying on the tag trigger.
+#
+# The bump runs scripts/check_content_bump.py first (pre_bump_hooks in pyproject.toml). If
+# the checklist fixture moved without a content_version bump the bump job fails before any
+# commit or tag exists; bump content_version (docs/RELEASE.md section 3) and run again.
+
+on:
+  workflow_dispatch:
+    inputs:
+      increment:
+        description: "Version bump: auto reads the conventional commits since the last tag. PATCH/MINOR forces it (only needed when there are no bumpable commits)."
+        type: choice
+        options:
+          - auto
+          - PATCH
+          - MINOR
+        default: auto
+
+permissions:
+  contents: read
+
+# Never run two releases at once. (Not the same group as release-deploy.yaml's
+# `production-deploy`: a caller and its called workflow sharing a group would block each other.)
+concurrency:
+  group: release
+  cancel-in-progress: false
+
+jobs:
+  test:
+    name: test
+    uses: ./.github/workflows/ci.yaml
+
+  bump:
+    name: Bump version & tag
+    needs: test
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    outputs:
+      bumped: ${{ steps.result.outputs.bumped }}
+      version: ${{ steps.result.outputs.version }}
+      tag: ${{ steps.result.outputs.tag }}
+    steps:
+      - name: Only release from master
+        if: github.ref != 'refs/heads/master'
+        run: |
+          echo "::error::Run the Release workflow on master (it was started on ${GITHUB_REF_NAME})."
+          exit 1
+
+      # Full history and tags: commitizen finds the last tag from them, and
+      # check_content_bump.py walks the fixture's git history.
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.11"
+
+      # Heads-up only, never fails the release. The pr-title check is not enforced, so a
+      # title it rejected, a direct push, or a plugin/SOP script commit can reach master
+      # without being a conventional commit. List the commits since the last tag that
+      # `cz bump` cannot read, i.e. the ones that will be missing from the version bump
+      # and the changelog.
+      - name: Warn about commits cz bump cannot read
+        run: |
+          pip install --quiet "commitizen>=4,<5"
+          last_tag=$(git describe --tags --abbrev=0 --match 'v*' 2>/dev/null || true)
+          if [ -z "${last_tag}" ]; then
+            echo "No v* tag found, skipping the commit check."
+            exit 0
+          fi
+
+          if report=$(cz check --rev-range "${last_tag}..HEAD" 2>&1); then
+            echo "All commits since ${last_tag} are readable by cz bump."
+            exit 0
+          fi
+
+          # cz prints a verbose block per bad commit; keep just the hashes and show subjects.
+          shas=$(printf '%s\n' "${report}" | grep -oP '^commit "\K[0-9a-f]{40}' || true)
+          if [ -z "${shas}" ]; then
+            echo "::warning title=Commit check::cz check failed for ${last_tag}..HEAD:"
+            printf '%s\n' "${report}"
+            exit 0
+          fi
+
+          {
+            echo "## Commits cz bump will ignore"
+            echo ""
+            echo "These commits since \`${last_tag}\` are not conventional commits, so they add nothing to the version bump or the changelog:"
+            echo ""
+            for sha in ${shas}; do
+              echo "- \`$(git log -1 --format='%h' "${sha}")\` $(git log -1 --format='%s' "${sha}")"
+            done
+            echo ""
+            echo "The release continues. If a change is missing from the changelog, fix it up in a \`docs(changelog): ...\` PR afterwards."
+          } | tee -a "$GITHUB_STEP_SUMMARY"
+          echo "::warning title=Unreadable commits::$(echo "${shas}" | wc -l) commit(s) since ${last_tag} are not conventional commits and will be missing from the changelog. See the run summary."
+
+      # Runs `cz bump --yes --changelog`, commits, tags and pushes. Exit code 21
+      # (no bumpable commits) is not an error for this action (no_raise defaults to 21);
+      # in that case nothing is pushed and `version` equals `previous_version`.
+      # `auto` leaves `increment` empty so commitizen decides from the commits.
+      - name: Commitizen bump
+        id: cz
+        uses: commitizen-tools/commitizen-action@0.27.1
+        with:
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          increment: ${{ inputs.increment != 'auto' && inputs.increment || '' }}
+
+      - name: Evaluate result
+        id: result
+        env:
+          NEW_VERSION: ${{ steps.cz.outputs.version }}
+          PREVIOUS_VERSION: ${{ steps.cz.outputs.previous_version }}
+        run: |
+          if [ "${NEW_VERSION}" = "${PREVIOUS_VERSION}" ]; then
+            echo "bumped=false" >> "$GITHUB_OUTPUT"
+            echo "::notice title=Nothing to release::No bumpable commits (feat / fix / ...) since v${PREVIOUS_VERSION}. Nothing was tagged or deployed."
+            {
+              echo "## Nothing to release"
+              echo ""
+              echo "There are no bumpable commits (\`feat\`, \`fix\`, \`refactor\`, ... or a breaking change) since \`v${PREVIOUS_VERSION}\`."
+              echo "No version bump, tag or deploy was made. To release anyway, run again with increment PATCH or MINOR."
+            } >> "$GITHUB_STEP_SUMMARY"
+          else
+            # tag_format in pyproject.toml is "v$version"
+            echo "bumped=true" >> "$GITHUB_OUTPUT"
+            echo "version=${NEW_VERSION}" >> "$GITHUB_OUTPUT"
+            echo "tag=v${NEW_VERSION}" >> "$GITHUB_OUTPUT"
+            echo "## Released v${NEW_VERSION} (was v${PREVIOUS_VERSION})" >> "$GITHUB_STEP_SUMMARY"
+          fi
+
+  deploy:
+    name: deploy
+    needs: bump
+    if: needs.bump.outputs.bumped == 'true'
+    # The called workflow requests contents: write; the caller must allow it.
+    permissions:
+      contents: write
+    uses: ./.github/workflows/release-deploy.yaml
+    with:
+      version: ${{ needs.bump.outputs.tag }}
+    secrets: inherit
