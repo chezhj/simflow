@@ -99,7 +99,9 @@ cd ~/domains && ~/deploy-tools/scripts/rollback.sh simflow
 
 ### The checks
 
-`test` (CI: `manage.py check` + `pytest`, plus the `js` job) and `pr-title` run on every PR. This repo is public, so a ruleset *can* enforce them: add one on `master` that requires `test` and `pr-title`, with `github-actions[bot]` (the Release bump commit) and the repo admin (the plugin/SOP scripts push straight to `master`) as bypass actors. **Until that ruleset exists nothing blocks the merge button**, so look at the checks before squash-merging and do not merge on red.
+`test` (CI: `manage.py check` + `pytest`, plus the `js` job) and `pr-title` run on every PR, but **nothing enforces them**: no ruleset requires them, so a red check does not disable the merge button. Look at the checks before squash-merging and do not merge on red.
+
+Why no required-status-checks rule: the Release workflow pushes its bump commit with `GITHUB_TOKEN`, and `github-actions[bot]` cannot be added to a ruleset's bypass list. A brand-new, untested commit would therefore be rejected by an enforced `required_status_checks` rule (GitHub's branch-protection docs say commits must pass the checks before they reach the branch; not verified for rulesets), and the Release would then fail at the push. Enforcing the checks would need the bump to be pushed with a token of a bypass user (e.g. a fine-grained PAT of the repo owner); because a token-pushed tag *does* trigger the `v*` deploy, the chained `deploy` job in `release.yml` would then have to go, or every release would deploy twice. If you ever enable it, the context names are `test` and `pr-title` (not `Tests`).
 
 ### Releasing
 

@@ -71,11 +71,11 @@ jobs:
         with:
           python-version: "3.11"
 
-      # Heads-up only, never fails the release. A title the pr-title check rejected (if
-      # the ruleset is not in place), a direct push, or a plugin/SOP script commit can
-      # reach master without being a conventional commit. List the commits since the last
-      # tag that `cz bump` cannot read, i.e. the ones that will be missing from the
-      # version bump and the changelog.
+      # Heads-up only, never fails the release. The pr-title check is not enforced, so a
+      # title it rejected, a direct push, or a plugin/SOP script commit can reach master
+      # without being a conventional commit. List the commits since the last tag that
+      # `cz bump` cannot read, i.e. the ones that will be missing from the version bump
+      # and the changelog.
       - name: Warn about commits cz bump cannot read
         run: |
           pip install --quiet "commitizen>=4,<5"

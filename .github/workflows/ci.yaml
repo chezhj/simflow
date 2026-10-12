@@ -2,7 +2,8 @@
 #
 # Runs on every PR, on every push to master, and is reused by release.yml (the Release
 # workflow's first job). The pytest job is deliberately called `test`: its name is the
-# status check shown on a PR, and the one a ruleset should require together with `pr-title`.
+# status check shown on a PR. Nothing enforces it: no ruleset requires it (see CLAUDE.md,
+# "The checks"), so look at it before squash-merging.
 name: CI
 
 on:

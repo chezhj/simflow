@@ -5,8 +5,8 @@ name: PR title
 # bump cannot parse (e.g. "Follow-up: fix things") silently produces no release.
 #
 # Job `pr-title` shows green/red on the PR and re-runs when the title is edited. It is
-# meant to be a required check (Settings > Rules > Rulesets); until that ruleset exists a
-# red check does not block the merge button. The rules live here and in CLAUDE.md.
+# not enforced: no ruleset requires it, so a red check does not block the merge button.
+# Fix the title before squash-merging. The rules live here and in CLAUDE.md.
 
 on:
   pull_request:
