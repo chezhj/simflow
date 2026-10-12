@@ -803,6 +803,20 @@ class TestIdleView(ViewTestCase):
         response = idle_view(request)
         self.assertEqual(response.status_code, 200)
 
+    def test_keep_screen_on_true_when_attribute_active(self):
+        attr = AttributeFactory(title="KeepScreenOn")
+        request = self.create_request_with_session("/idle/")
+        _create_session_with_flight(request, [attr.id])
+        response = idle_view(request)
+        self.assertTrue(response.context_data["keep_screen_on"])
+
+    def test_keep_screen_on_false_when_attribute_inactive(self):
+        AttributeFactory(title="KeepScreenOn")
+        request = self.create_request_with_session("/idle/")
+        _create_session_with_flight(request, [])
+        response = idle_view(request)
+        self.assertFalse(response.context_data["keep_screen_on"])
+
     def test_context_contains_live_values(self):
         request = self.create_request_with_session("/idle/")
         _create_session_with_flight(request, [])
