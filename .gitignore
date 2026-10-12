@@ -22,3 +22,6 @@ db.sqlite3
 
 # Generated from poetry.lock by the release workflow; never commit a snapshot
 requirements.txt
+
+# Poetry in-project virtualenv (poetry.toml)
+.venv/
