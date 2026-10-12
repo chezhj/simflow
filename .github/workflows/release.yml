@@ -111,15 +111,20 @@ jobs:
           } | tee -a "$GITHUB_STEP_SUMMARY"
           echo "::warning title=Unreadable commits::$(echo "${shas}" | wc -l) commit(s) since ${last_tag} are not conventional commits and will be missing from the changelog. See the run summary."
 
-      # Runs `cz bump --yes --changelog`, commits, tags and pushes. Exit code 21
-      # (no bumpable commits) is not an error for this action (no_raise defaults to 21);
-      # in that case nothing is pushed and `version` equals `previous_version`.
+      # Runs `cz bump --yes --changelog`, commits, tags and pushes. Two exit codes mean
+      # "nothing to release" and must not fail the job (no_raise, comma-separated):
+      #   21 NO_COMMITS_TO_BUMP  commits since the last tag, but none is bumpable
+      #    3 NO_COMMITS_FOUND    no commits at all since the last tag (HEAD is the tag,
+      #                          e.g. Release run twice in a row)
+      # The action's default is only 21, so the second case used to fail the job. In both
+      # cases cz exits 0, nothing is pushed and `version` equals `previous_version`.
       # `auto` leaves `increment` empty so commitizen decides from the commits.
       - name: Commitizen bump
         id: cz
         uses: commitizen-tools/commitizen-action@0.27.1
         with:
           github_token: ${{ secrets.GITHUB_TOKEN }}
+          no_raise: "3,21"
           increment: ${{ inputs.increment != 'auto' && inputs.increment || '' }}
 
       - name: Evaluate result
@@ -130,11 +135,11 @@ jobs:
         run: |
           if [ "${NEW_VERSION}" = "${PREVIOUS_VERSION}" ]; then
             echo "bumped=false" >> "$GITHUB_OUTPUT"
-            echo "::notice title=Nothing to release::No bumpable commits (feat / fix / ...) since v${PREVIOUS_VERSION}. Nothing was tagged or deployed."
+            echo "::notice title=Nothing to release::No new or bumpable commits (feat / fix / ...) since v${PREVIOUS_VERSION}. Nothing was tagged or deployed."
             {
               echo "## Nothing to release"
               echo ""
-              echo "There are no bumpable commits (\`feat\`, \`fix\`, \`refactor\`, ... or a breaking change) since \`v${PREVIOUS_VERSION}\`."
+              echo "There are no new commits, or none that is bumpable (\`feat\`, \`fix\`, \`refactor\`, ... or a breaking change), since \`v${PREVIOUS_VERSION}\`."
               echo "No version bump, tag or deploy was made. To release anyway, run again with increment PATCH or MINOR."
             } >> "$GITHUB_STEP_SUMMARY"
           else
