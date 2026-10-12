@@ -6,7 +6,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Commands
 
-**Dependencies are managed with Poetry** (`pyproject.toml` / `poetry.lock`; `poetry.toml` creates the venv in-project at `.venv/`). Poetry is available in the cloud container. If `django` or another import is missing, run `poetry install` and use `poetry run …` — do not build an ad-hoc virtualenv or `pip install` from `requirements-p.txt`, which is a stale export (it lacks `django-axes`). CI does the same (`poetry install` then `poetry run pytest`).
+**Dependencies are managed with Poetry** (`pyproject.toml` / `poetry.lock`; `poetry.toml` creates the venv in-project at `.venv/`). Poetry is available in the cloud container. If `django` or another import is missing, run `poetry install` and use `poetry run …` — do not build an ad-hoc virtualenv or `pip install` from a requirements file (`requirements*.txt` are untracked and generated from `poetry.lock` at release time). CI does the same (`poetry install` then `poetry run pytest`).
 
 ```bash
 # Install dependencies (incl. dev group)
