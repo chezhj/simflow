@@ -246,6 +246,28 @@ class TestPollView(TestCase):
             pass
             cond_proc.delete()
 
+    def test_poll_new_show_procedures_only_on_rising_edge(self):
+        """new_show_procedures (the only list the idle page auto-navigates on) holds a
+        slug on its rising edge, and not while the rule stays continuously true."""
+        cond_proc = Procedure.objects.create(
+            title="Takeoff Prep", step=94, slug="rising-only-test",
+            show_rule={"dataref": "sim/test/zone", "op": "eq", "value": 1},
+            sop=self.sop,
+        )
+        CheckItemFactory(procedure=cond_proc)  # incomplete, so it stays suggested
+        _set_datarefs(self.session, {"sim/test/zone": 1})
+        _set_session_key(self.client, self.session.session_key)
+        try:
+            first = _get_poll(self.client).json()
+            self.assertIn(cond_proc.slug, first["new_show_procedures"])
+            self.assertIn(cond_proc.slug, first["show_procedures"])
+
+            second = _get_poll(self.client).json()
+            self.assertNotIn(cond_proc.slug, second["new_show_procedures"])
+            self.assertIn(cond_proc.slug, second["show_procedures"])
+        finally:
+            cond_proc.delete()
+
     def test_poll_continuously_true_all_done_not_in_show_procedures(self):
         """When rule is continuously True (prev=True) and all items are done, procedure is
         silently skipped — no loop, no state deletion."""

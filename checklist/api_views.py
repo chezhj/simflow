@@ -109,6 +109,10 @@ def poll_view(request):
     prev_state = session.show_rule_state   # {str(proc.pk): bool}
     new_state = {}
     show_procedures = []
+    # Subset of show_procedures that just rose (False -> True). Only these may
+    # auto-navigate the idle page: a rule that was already true when the pilot
+    # arrived (a stand inside the Before Takeoff zone, say) is suggested, not forced.
+    new_show_procedures = []
 
     for proc in Procedure.objects.exclude(show_rule=None).order_by('step'):
         current = evaluate_rule(proc.show_rule, last_state)
@@ -131,6 +135,7 @@ def poll_view(request):
                 checklist_item__procedure=proc,
             ).delete()
             show_procedures.append(proc.slug)
+            new_show_procedures.append(proc.slug)
         else:
             # Rule continuously True. Only show if pilot has not yet finished.
             proc_items = list(
@@ -226,6 +231,7 @@ def poll_view(request):
         "last_seen": last_seen,
         "server_time": server_time,
         "show_procedures": show_procedures,
+        "new_show_procedures": new_show_procedures,
         "show_live_values": show_live_values,
         "active_warn_ids": active_warn_ids,
         "phase_state": state,

@@ -240,11 +240,13 @@
 
     /* ── Apply firing rules from show_procedures ── */
     /* Idle is the hub: every procedure is always visible in the grouped sidebar.
-       A firing rule (1) reveals its prominent "What's next" button, (2) highlights
-       its sidebar item as suggested, and (3) auto-navigates (idle = no active
-       procedure, so a firing rule should fire). */
-    function applyShowProcedures(slugs) {
+       A firing rule (1) reveals its prominent "What's next" button and (2) highlights
+       its sidebar item as suggested. (3) Only a rule that has just risen
+       (newSlugs = new_show_procedures) auto-navigates: one that was already true
+       when the pilot reached idle stays a suggestion. */
+    function applyShowProcedures(slugs, newSlugs) {
         slugs = slugs || [];
+        newSlugs = newSlugs || [];
         /* show_procedures is ordered by step ascending (server-side), so the first
            slug is always the lowest-step firing rule. Break after the first
            navigation to prevent two simultaneous rules from racing. */
@@ -258,7 +260,7 @@
                 });
                 revealedSlugs.add(slug);
             }
-            if (!navigatedSlugs.has(slug)) {
+            if (newSlugs.indexOf(slug) !== -1 && !navigatedSlugs.has(slug)) {
                 navigatedSlugs.add(slug);
                 window.location.href = '/' + slug;
                 break;  /* only navigate to the first (lowest step) firing rule */
@@ -304,7 +306,7 @@
                 : Math.floor(Date.now() / 1000);
             var nowServer = lastPoll;
 
-            applyShowProcedures(data.show_procedures || []);
+            applyShowProcedures(data.show_procedures || [], data.new_show_procedures || []);
             applyLiveValues(data.show_live_values || []);
             if (data.debug_show_procedures !== undefined) {
                 renderDebugRules(data.debug_show_procedures || [], data.debug_attributes || []);
