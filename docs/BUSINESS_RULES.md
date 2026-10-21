@@ -190,7 +190,7 @@ Source: `detail.html` — `updateProgress()` JS
 
 **`idle.html`** (no active procedure — a firing rule *should* fire):
 - Each firing slug reveals its prominent "What's next" button **and** marks its sidebar item `.suggested`.
-- **Auto-navigates** only to a slug in `new_show_procedures` (the rising edge, Rule 16), the first by `step`; a rule that was already true when the pilot reached idle is suggested, not navigated to. `navigatedSlugs` prevents re-navigating to the same slug within a page load. The loop breaks after the first navigation so two simultaneous rules don't race.
+- **Auto-navigates** to the first firing slug (lowest `step`); `navigatedSlugs` prevents re-navigating to the same slug within a page load. The loop breaks after the first navigation so two simultaneous rules don't race.
 - When a slug stops firing before the pilot acts, its button is re-hidden and its `.suggested` highlight cleared. Function: `applyShowProcedures()`.
 
 **Completion:** a completed conditional procedure stays visible in the nav (marked `done`). The server's edge detection (Rule 16) stops listing it in `show_procedures`, so the suggested highlight clears on the next poll. It re-suggests when `show_rule` fires again (rising edge).
@@ -296,8 +296,8 @@ Source: `plugin_views.py — plugin_state()`
 | Rule result | Previous result | Items done? | Action |
 | --- | --- | --- | --- |
 | False | any | — | Hidden — not in `show_procedures`. `False` recorded in `show_rule_state`. |
-| True | False (rising edge) | any | `FlightItemState` rows for procedure deleted. Slug added to `show_procedures` and `new_show_procedures`. Idle page auto-navigates. |
-| True | True (continuously true) | No | Slug added to `show_procedures` only (suggested, never auto-navigated). Pilot is mid-checklist. |
+| True | False (rising edge) | any | `FlightItemState` rows for procedure deleted. Slug added to `show_procedures`. Browser auto-navigates. |
+| True | True (continuously true) | No | Slug added to `show_procedures`. Pilot is mid-checklist. |
 | True | True (continuously true) | Yes | Silently skipped. States preserved. No loop. |
 
 `show_rule_state` is written for **every** poll evaluation — including when the rule is `False`. This is essential: if `False` were not recorded, the next `True` evaluation would not be recognized as a rising edge, and the procedure would never re-trigger.

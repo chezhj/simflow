@@ -186,7 +186,7 @@ Both templates poll `/api/poll/` on `POLL_INTERVAL_MS`. The response drives two 
 
 **Conditional procedure reveal / auto-navigation** (`applyShowProcedures`):
 
-`show_procedures` — slugs whose `Procedure.show_rule` currently evaluates to true against the latest plugin dataref snapshot; they reveal/highlight the procedure. `new_show_procedures` is the subset that just rose (False → True) and is the only list the idle page auto-navigates on, so a rule already true when the pilot reaches idle is suggested, not forced.
+`show_procedures` — slugs whose `Procedure.show_rule` currently evaluates to true against the latest plugin dataref snapshot. When `sim_connected=true` these are auto-navigated; when false, a manual fallback reveals all conditional procedures so the pilot can tap them.
 
 Two sets track state to avoid conflicts:
 - `revealedSlugs` — which procedures are currently visible in the nav (display tracking). The manual fallback (autoNav=false) adds to this set so buttons stay visible.
