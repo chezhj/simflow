@@ -1,3 +1,9 @@
+## v2.10.4 (2026-10-22)
+
+### Fix
+
+- **content**: drop the circle, add a speed guard to before takeoff (#43)
+
 ## v2.10.3 (2026-10-12)
 
 ### Fix
