@@ -138,24 +138,24 @@ manually, which is the same degradation `near` already has.
 
 ```json
 {"all": [
-  {"any": [
-    {"op": "near", "ref_lat": "…ref_runway_start_lat",
-     "ref_lon": "…ref_runway_start_lon", "meters": 500},
-    {"op": "corridor", "ref_lat": "…ref_runway_start_lat",
-     "ref_lon": "…ref_runway_start_lon", "crs": "…ref_runway_crs",
-     "ahead_m": 4000, "behind_m": 150, "half_width_m": 90}
-  ]},
-  {"dataref": "sim/flightmodel/position/y_agl", "op": "lt", "value": 5}
+  {"op": "corridor", "ref_lat": "…ref_runway_start_lat",
+   "ref_lon": "…ref_runway_start_lon", "crs": "…ref_runway_crs",
+   "ahead_m": 4000, "behind_m": 150, "half_width_m": 90},
+  {"dataref": "sim/flightmodel/position/y_agl", "op": "lt", "value": 5},
+  {"dataref": "sim/flightmodel/position/groundspeed", "op": "lt", "value": 5}
 ]}
 ```
 
-`near` is kept alongside the corridor rather than replaced. It covers the
-approach to the threshold area from a taxiway that is off to the side and
-therefore outside the corridor — today's behaviour — so this is a strict
-superset: nothing that triggered before stops triggering.
+The `near` circle that originally sat beside the corridor (500 m, in an `any`)
+was removed in content 1.4.2. A circle that reaches the threshold area also
+reaches stands and aprons close to the runway, so Before Takeoff fired as soon
+as Before Taxi finished (session 129). The rectangle over the runway is the
+only position test now.
 
-The `y_agl` guard still applies to both, so the corridor does not re-fire as
-the aircraft flies down the runway on rotation.
+The `y_agl` guard stops the corridor re-firing as the aircraft flies down the
+runway on rotation. The `groundspeed` guard (m/s, so 5 is about 10 kt) means
+the procedure only opens once the aircraft has slowed to line up or hold, not
+while it taxis through the corridor or across the runway.
 
 ### 4.1 Tuning the numbers
 

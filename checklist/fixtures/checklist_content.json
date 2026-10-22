@@ -5,7 +5,7 @@
     "fields": {
       "name": "Boeing 737-800",
       "icao_code": "B738",
-      "content_version": "1.4.1",
+      "content_version": "1.4.2",
       "release_notes": "- Fixed typo in evaluation rul for fix-es",
       "updated_at": "2026-10-03T08:26:46.991505Z"
     }
@@ -74,26 +74,21 @@
       "show_rule": {
         "all": [
           {
-            "any": [
-              {
-                "op": "near",
-                "ref_lat": "laminar/B738/fms/ref_runway_start_lat",
-                "ref_lon": "laminar/B738/fms/ref_runway_start_lon",
-                "meters": 500
-              },
-              {
-                "op": "corridor",
-                "ref_lat": "laminar/B738/fms/ref_runway_start_lat",
-                "ref_lon": "laminar/B738/fms/ref_runway_start_lon",
-                "crs": "laminar/B738/fms/ref_runway_crs",
-                "ahead_m": 4000,
-                "behind_m": 150,
-                "half_width_m": 90
-              }
-            ]
+            "op": "corridor",
+            "ref_lat": "laminar/B738/fms/ref_runway_start_lat",
+            "ref_lon": "laminar/B738/fms/ref_runway_start_lon",
+            "crs": "laminar/B738/fms/ref_runway_crs",
+            "ahead_m": 4000,
+            "behind_m": 150,
+            "half_width_m": 90
           },
           {
             "dataref": "sim/flightmodel/position/y_agl",
+            "op": "lt",
+            "value": 5
+          },
+          {
+            "dataref": "sim/flightmodel/position/groundspeed",
             "op": "lt",
             "value": 5
           }
