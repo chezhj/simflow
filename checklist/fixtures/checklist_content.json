@@ -3451,7 +3451,7 @@
                 "value": 10
               },
               {
-                "dataref": "sim/weather/aircraft/precipitation_on_aircraft_ratio ",
+                "dataref": "sim/weather/aircraft/precipitation_on_aircraft_ratio",
                 "op": "gte",
                 "value": 0.1
               }
@@ -6303,8 +6303,7 @@
         "value": 1
       },
       "attributes": [
-        7,
-        9
+        7
       ]
     }
   },
@@ -6334,8 +6333,7 @@
         ]
       },
       "attributes": [
-        7,
-        9
+        7
       ]
     }
   },
@@ -6714,21 +6712,30 @@
       "item": "Engine Anti Ice",
       "procedure": 4,
       "step": 52,
-      "setting": "ON",
+      "setting": "ON with visible moisture",
       "action_label": "SET",
       "dataref_expression": "(laminar/B738/ice/eng1_heat_pos:1)&&(laminar/B738/ice/eng2_heat_pos:1)",
       "role": "PM",
       "auto_check_rule": {
-        "all": [
+        "any": [
           {
-            "dataref": "laminar/B738/ice/eng1_heat_pos",
-            "op": "eq",
-            "value": 1
+            "all": [
+              {
+                "dataref": "laminar/B738/ice/eng1_heat_pos",
+                "op": "eq",
+                "value": 1
+              },
+              {
+                "dataref": "laminar/B738/ice/eng2_heat_pos",
+                "op": "eq",
+                "value": 1
+              }
+            ]
           },
           {
-            "dataref": "laminar/B738/ice/eng2_heat_pos",
-            "op": "eq",
-            "value": 1
+            "dataref": "sim/weather/aircraft/precipitation_on_aircraft_ratio",
+            "op": "lte",
+            "value": 0.1
           }
         ]
       },
@@ -6744,14 +6751,23 @@
       "item": "Wing Anti Ice",
       "procedure": 4,
       "step": 53,
-      "setting": "ON",
+      "setting": "ON with visible moisture",
       "action_label": "SET",
       "dataref_expression": "(laminar/B738/ice/wing_heat_pos:1)",
       "role": "PM",
       "auto_check_rule": {
-        "dataref": "laminar/B738/ice/wing_heat_pos",
-        "op": "eq",
-        "value": 1
+        "any": [
+          {
+            "dataref": "laminar/B738/ice/wing_heat_pos",
+            "op": "eq",
+            "value": 1
+          },
+          {
+            "dataref": "sim/weather/aircraft/precipitation_on_aircraft_ratio",
+            "op": "lte",
+            "value": 0.1
+          }
+        ]
       },
       "attributes": [
         9
