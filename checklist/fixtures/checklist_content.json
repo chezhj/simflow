@@ -5,9 +5,9 @@
     "fields": {
       "name": "Boeing 737-800",
       "icao_code": "B738",
-      "content_version": "1.5.0",
-      "release_notes": "- Anti-Ice and 0-10 \u00b0C conditions are only offered on the ground (new gate rule), so the profile popup no longer appears in flight\n- The popup now states the current temperature",
-      "updated_at": "2026-11-07T10:29:57.165028Z"
+      "content_version": "1.5.3",
+      "release_notes": "- Before Takeoff now opens at the hold-short line: the runway corridor is 120 m either side of the centreline (was 90 m)\n- CDU preflight: the Wind item ticks itself when the winds are loaded (the FMC EXEC light comes on)\n- Before Taxi, 0-10 \u00b0C: engine and wing anti-ice read \"ON with visible moisture\" and continue on their own when there is little moisture\n- Before Taxi, sub-zero: wing and engine anti-ice now show for Anti-Ice Normal alone (they needed two exclusive conditions and never showed)\n- Takeoff: the cold-and-wet CONT option for the engine start switches now works (it read a misspelled dataref)",
+      "updated_at": "2026-11-07T16:34:52.773783Z"
     }
   },
   {
@@ -80,7 +80,7 @@
             "crs": "laminar/B738/fms/ref_runway_crs",
             "ahead_m": 4000,
             "behind_m": 150,
-            "half_width_m": 90
+            "half_width_m": 120
           },
           {
             "dataref": "sim/flightmodel/position/y_agl",
@@ -3451,7 +3451,7 @@
                 "value": 10
               },
               {
-                "dataref": "sim/weather/aircraft/precipitation_on_aircraft_ratio ",
+                "dataref": "sim/weather/aircraft/precipitation_on_aircraft_ratio",
                 "op": "gte",
                 "value": 0.1
               }
@@ -5409,7 +5409,11 @@
       "action_label": "SET",
       "dataref_expression": "",
       "role": "C",
-      "auto_check_rule": null,
+      "auto_check_rule": {
+        "dataref": "laminar/B738/indicators/fms_exec_light_pilot",
+        "op": "eq",
+        "value": 1
+      },
       "attributes": [
         4
       ]
@@ -6299,8 +6303,7 @@
         "value": 1
       },
       "attributes": [
-        7,
-        9
+        7
       ]
     }
   },
@@ -6330,8 +6333,7 @@
         ]
       },
       "attributes": [
-        7,
-        9
+        7
       ]
     }
   },
@@ -6710,21 +6712,30 @@
       "item": "Engine Anti Ice",
       "procedure": 4,
       "step": 52,
-      "setting": "ON",
+      "setting": "ON with visible moisture",
       "action_label": "SET",
       "dataref_expression": "(laminar/B738/ice/eng1_heat_pos:1)&&(laminar/B738/ice/eng2_heat_pos:1)",
       "role": "PM",
       "auto_check_rule": {
-        "all": [
+        "any": [
           {
-            "dataref": "laminar/B738/ice/eng1_heat_pos",
-            "op": "eq",
-            "value": 1
+            "all": [
+              {
+                "dataref": "laminar/B738/ice/eng1_heat_pos",
+                "op": "eq",
+                "value": 1
+              },
+              {
+                "dataref": "laminar/B738/ice/eng2_heat_pos",
+                "op": "eq",
+                "value": 1
+              }
+            ]
           },
           {
-            "dataref": "laminar/B738/ice/eng2_heat_pos",
-            "op": "eq",
-            "value": 1
+            "dataref": "sim/weather/aircraft/precipitation_on_aircraft_ratio",
+            "op": "lte",
+            "value": 0.1
           }
         ]
       },
@@ -6740,14 +6751,23 @@
       "item": "Wing Anti Ice",
       "procedure": 4,
       "step": 53,
-      "setting": "ON",
+      "setting": "ON with visible moisture",
       "action_label": "SET",
       "dataref_expression": "(laminar/B738/ice/wing_heat_pos:1)",
       "role": "PM",
       "auto_check_rule": {
-        "dataref": "laminar/B738/ice/wing_heat_pos",
-        "op": "eq",
-        "value": 1
+        "any": [
+          {
+            "dataref": "laminar/B738/ice/wing_heat_pos",
+            "op": "eq",
+            "value": 1
+          },
+          {
+            "dataref": "sim/weather/aircraft/precipitation_on_aircraft_ratio",
+            "op": "lte",
+            "value": 0.1
+          }
+        ]
       },
       "attributes": [
         9
