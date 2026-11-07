@@ -145,3 +145,25 @@ test('a blocked plugin says the checklist cannot follow the sim, not that an upd
     assert.notEqual(warn.text, blocked.text);
     assert.match(blocked.text, /cannot follow the sim/);
 });
+
+test('summarizeTransition states each reason once and lists every change', () => {
+    const s = SimFlow.summarizeTransition([
+        {attr_id: 7, attr_title: 'Anti-Ice (\u22640\u00b0C)', prompt_message: 'Temperature is now -2 \u00b0C', suggested_active: true},
+        {attr_id: 9, attr_title: '0-10\u00b0C', prompt_message: 'Temperature is now -2 \u00b0C', suggested_active: false},
+    ]);
+    assert.deepEqual(s.reasons, ['Temperature is now -2 \u00b0C']);
+    assert.deepEqual(s.changes.map(c => [c.attrId, c.activate]), [[7, true], [9, false]]);
+});
+
+test('summarizeTransition tolerates an empty or missing prompt list', () => {
+    assert.deepEqual(SimFlow.summarizeTransition([]), {reasons: [], changes: []});
+    assert.deepEqual(SimFlow.summarizeTransition(null), {reasons: [], changes: []});
+});
+
+test('transitionDecisions gives every prompt the same answer', () => {
+    const prompts = [{attr_id: 7}, {attr_id: 9}];
+    assert.deepEqual(SimFlow.transitionDecisions(prompts, true),
+        [{attr_id: 7, accepted: true}, {attr_id: 9, accepted: true}]);
+    assert.deepEqual(SimFlow.transitionDecisions(prompts, false),
+        [{attr_id: 7, accepted: false}, {attr_id: 9, accepted: false}]);
+});

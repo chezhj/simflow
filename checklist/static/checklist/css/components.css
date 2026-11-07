@@ -2277,11 +2277,14 @@
   border-radius: var(--radius-lg);
   max-width: 480px;
   width: 100%;
+  max-height: 100%;
+  display: flex;
+  flex-direction: column;
   box-shadow: 0 8px 32px rgba(0, 0, 0, 0.24);
 }
 
 .attr-modal-header {
-  padding: var(--space-5) var(--space-6) var(--space-4);
+  padding: var(--space-5) var(--space-5) var(--space-4);
   border-bottom: 1px solid var(--color-border);
 }
 .attr-modal-title {
@@ -2292,47 +2295,60 @@
 }
 
 .attr-modal-body {
-  padding: var(--space-4) var(--space-6);
+  padding: var(--space-4) var(--space-5);
+  overflow-y: auto;
+}
+/* What the conditions are (the "why") */
+.attr-modal-reason {
+  font-size: 1rem;
+  font-weight: 600;
+  color: var(--color-ink);
+  margin: 0 0 var(--space-2);
 }
 .attr-modal-intro {
   font-size: 0.875rem;
   color: var(--color-ink-mid);
-  margin: 0 0 var(--space-4);
+  margin: var(--space-3) 0 var(--space-2);
 }
-
-.attr-prompt-row {
-  padding: var(--space-3) 0;
-  border-bottom: 1px solid var(--color-border);
+/* What "Match conditions" would change */
+.attr-modal-changes {
+  list-style: none;
+  margin: 0;
+  padding: 0;
 }
-.attr-prompt-row:last-child { border-bottom: none; }
-
-.attr-prompt-msg {
+.attr-modal-change {
   font-size: 0.875rem;
   color: var(--color-ink);
-  margin-bottom: var(--space-2);
+  padding: var(--space-2) 0;
+  border-top: 1px solid var(--color-border);
 }
-.attr-prompt-choices {
-  display: flex;
-  gap: var(--space-5);
-}
-.attr-prompt-choices label {
-  display: flex;
-  align-items: center;
-  gap: var(--space-2);
-  font-size: 0.8125rem;
-  color: var(--color-ink-mid);
-  cursor: pointer;
-}
-.attr-prompt-choices input[type="radio"] {
-  accent-color: var(--color-teal-mid);
+.attr-modal-verb {
+  font-weight: 600;
+  color: var(--color-teal-dark);
 }
 
+/* Phone first: full-width buttons, the safe choice ("Keep current") last in
+   reading order so the primary action sits on top under the thumb. */
 .attr-modal-footer {
   display: flex;
+  flex-direction: column-reverse;
   gap: var(--space-3);
-  padding: var(--space-4) var(--space-6) var(--space-5);
+  padding: var(--space-4) var(--space-5) var(--space-5);
   border-top: 1px solid var(--color-border);
-  justify-content: flex-end;
+}
+.attr-modal-footer button {
+  width: 100%;
+  justify-content: center;
+}
+@media (min-width: 600px) {
+  .attr-modal-header { padding: var(--space-5) var(--space-6) var(--space-4); }
+  .attr-modal-body   { padding: var(--space-4) var(--space-6); }
+  .attr-modal-footer {
+    flex-direction: row;
+    justify-content: flex-end;
+    padding: var(--space-4) var(--space-6) var(--space-5);
+  }
+  .attr-modal-footer button { width: auto; }
 }
 
 /* ── Debug: rule evaluator panel (DEBUG mode only) ──────────────── */

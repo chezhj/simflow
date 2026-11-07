@@ -418,6 +418,36 @@ def uncheck_view(request):
     })
 
 
+class _Observed(dict):
+    """format_map() source that leaves unknown placeholders readable."""
+
+    def __missing__(self, key):
+        return "{" + key + "}"
+
+
+def _render_prompt_message(attr, datarefs):
+    """
+    Fill the observed values into attr.prompt_message.
+
+    Placeholders are the last path segment of a dataref the rule or gate reads,
+    e.g. "Temperature is {temperature_sealevel_c:.0f} °C". That lets the dialog
+    state the actual conditions that triggered it, true in both directions
+    (activating or deactivating). A message that does not format cleanly is
+    returned as written rather than failing the whole request.
+    """
+    message = attr.prompt_message or ""
+    paths = set(collect_datarefs(attr.live_rule))
+    if attr.live_rule_gate:
+        paths.update(collect_datarefs(attr.live_rule_gate))
+    observed = _Observed(
+        (path.rsplit("/", 1)[-1], datarefs[path]) for path in paths if path in datarefs
+    )
+    try:
+        return message.format_map(observed)
+    except (ValueError, TypeError, AttributeError, IndexError):
+        return message
+
+
 def _live_rule_applicable(attr, datarefs):
     """
     True when attr.live_rule may be acted on with this dataref snapshot.
@@ -453,7 +483,7 @@ def attribute_transition_view(request):
                  {
                    "attr_id": <int>,
                    "attr_title": "<str>",
-                   "prompt_message": "<str>",
+                   "prompt_message": "<str>",   # the conditions, observed values filled in
                    "currently_active": <bool>,
                    "suggested_active": <bool>
                  }, ...
@@ -508,7 +538,7 @@ def attribute_transition_view(request):
                 prompts.append({
                     "attr_id": attr.pk,
                     "attr_title": attr.label or attr.title,
-                    "prompt_message": attr.prompt_message,
+                    "prompt_message": _render_prompt_message(attr, datarefs),
                     "currently_active": currently_active,
                     "suggested_active": rule_fires,
                 })

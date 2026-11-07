@@ -8,6 +8,7 @@
 
 {% block head %}
     <script src="{% static 'checklist/simflow-core.js' %}"></script>
+    <script src="{% static 'checklist/simflow-transition.js' %}"></script>
     <script src="{% static 'checklist/toggle_switches.js' %}"></script>
     <script src="{% static 'checklist/wakelock.js' %}"></script>
 {% endblock head %}
@@ -122,19 +123,7 @@
 
 </div>
 
-<!-- Attribute transition modal (shared) -->
-<div id="attr-modal" class="attr-modal js-hidden"
-     role="dialog" aria-modal="true" aria-labelledby="attr-modal-title">
-    <div class="attr-modal-box">
-        <div class="attr-modal-title" id="attr-modal-title">Profile update</div>
-        <div id="attr-modal-list"></div>
-        <div class="attr-modal-actions">
-            <button id="attr-modal-accept-all" class="btn btn-ghost">Accept all</button>
-            <button id="attr-modal-cancel"     class="btn btn-ghost">Cancel</button>
-            <button id="attr-modal-confirm"    class="btn btn-primary">Confirm</button>
-        </div>
-    </div>
-</div>
+{% include 'checklist/_attr_modal.html' %}
 {% endblock content %}
 
 {% block end_script %}
@@ -364,79 +353,9 @@
         }
     });
 
-    /* ── Attribute transition: intercept nav clicks ── */
-    async function navigateWithTransition(targetUrl) {
-        try {
-            var res  = await fetch(CFG.urls.attrTransition, {
-                headers: {'X-CSRFToken': getCsrf()}
-            });
-            var data = await res.json();
-            if (data.prompts && data.prompts.length > 0) {
-                showTransitionModal(data.prompts, targetUrl);
-                return;
-            }
-        } catch (_) { /* fall through */ }
-        window.location.href = targetUrl;
-    }
-
-    function showTransitionModal(prompts, targetUrl) {
-        var modal = document.getElementById('attr-modal');
-        var list  = document.getElementById('attr-modal-list');
-        list.innerHTML = '';
-        prompts.forEach(function (p) {
-            var action   = p.suggested_active ? 'Activate' : 'Deactivate';
-            var override = p.suggested_active ? 'Keep inactive' : 'Keep active';
-            var row = document.createElement('div');
-            row.className      = 'attr-prompt-row';
-            row.dataset.attrId = p.attr_id;
-            row.innerHTML =
-                '<div class="attr-prompt-msg">' + escHtml(p.prompt_message || p.attr_title) + '</div>' +
-                '<div class="attr-prompt-choices">' +
-                    '<label><input type="radio" name="attr_' + p.attr_id + '" value="accept" checked> ' + escHtml(action)   + '</label>' +
-                    '<label><input type="radio" name="attr_' + p.attr_id + '" value="reject"> '          + escHtml(override) + '</label>' +
-                '</div>';
-            list.appendChild(row);
-        });
-        modal._targetUrl = targetUrl;
-        modal.classList.remove('js-hidden');
-    }
-
-    document.getElementById('attr-modal-accept-all').addEventListener('click', function () {
-        document.querySelectorAll('#attr-modal-list input[value="accept"]')
-            .forEach(function (r) { r.checked = true; });
-    });
-    document.getElementById('attr-modal-cancel').addEventListener('click', function () {
-        document.getElementById('attr-modal').classList.add('js-hidden');
-    });
-    document.getElementById('attr-modal-confirm').addEventListener('click', async function () {
-        var modal     = document.getElementById('attr-modal');
-        var targetUrl = modal._targetUrl;
-        var decisions = [];
-        modal.querySelectorAll('.attr-prompt-row').forEach(function (row) {
-            decisions.push({
-                attr_id:  parseInt(row.dataset.attrId, 10),
-                accepted: row.querySelector('input[value="accept"]').checked
-            });
-        });
-        try {
-            await fetch(targetUrl, {
-                method:  'POST',
-                headers: {'Content-Type': 'application/json', 'X-CSRFToken': getCsrf()},
-                body:    JSON.stringify({decisions: decisions})
-            });
-        } catch (_) { /* navigate anyway */ }
-        modal.classList.add('js-hidden');
-        window.location.href = targetUrl;
-    });
-
-    document.querySelectorAll('.js-nav-btn').forEach(function (btn) {
-        btn.addEventListener('click', function (e) {
-            var target = btn.getAttribute('href');
-            if (!target || target === '#') return;
-            e.preventDefault();
-            navigateWithTransition(target);
-        });
-    });
+    /* ── Attribute transition: the conditions-changed dialog ──
+       Shared with the other page — see static/checklist/simflow-transition.js */
+    SimFlow.initTransition({url: CFG.urls.attrTransition, csrfToken: getCsrf});
 
 }());
 </script>

@@ -1,0 +1,24 @@
+{# Conditions-changed dialog, shared by detail.html and idle.html. Driven by #}
+{# static/checklist/simflow-transition.js; every id below is addressed there. #}
+<div id="attr-modal"
+     class="attr-modal js-hidden"
+     role="dialog"
+     aria-modal="true"
+     aria-labelledby="attr-modal-title"
+     aria-describedby="attr-modal-reasons">
+    <div class="attr-modal-box">
+        <div class="attr-modal-header">
+            <h2 id="attr-modal-title" class="attr-modal-title">Conditions changed</h2>
+        </div>
+        <div class="attr-modal-body">
+            <div id="attr-modal-reasons" class="attr-modal-reasons"></div>
+            <p class="attr-modal-intro">Match your profile to these conditions?</p>
+            <ul id="attr-modal-changes" class="attr-modal-changes">
+            </ul>
+        </div>
+        <div class="attr-modal-footer">
+            <button class="btn-setup-secondary" id="attr-modal-keep" type="button">Keep current</button>
+            <button class="btn-setup-primary" id="attr-modal-match" type="button">Match conditions</button>
+        </div>
+    </div>
+</div>

@@ -5,9 +5,9 @@
     "fields": {
       "name": "Boeing 737-800",
       "icao_code": "B738",
-      "content_version": "1.4.2",
-      "release_notes": "- Fixed typo in evaluation rul for fix-es",
-      "updated_at": "2026-10-03T08:26:46.991505Z"
+      "content_version": "1.5.0",
+      "release_notes": "- Anti-Ice and 0-10 \u00b0C conditions are only offered on the ground (new gate rule), so the profile popup no longer appears in flight\n- The popup now states the current temperature",
+      "updated_at": "2026-11-07T10:29:57.165028Z"
     }
   },
   {
@@ -422,7 +422,7 @@
         ]
       },
       "live_rule_mode": "prompt_on_change",
-      "prompt_message": "OAT below 0 \u00b0C \u2014 Anti-Ice Normal procedures active?"
+      "prompt_message": "Temperature is now {temperature_sealevel_c:.0f} \u00b0C"
     }
   },
   {
@@ -479,7 +479,7 @@
         ]
       },
       "live_rule_mode": "prompt_on_change",
-      "prompt_message": "OAT 0\u201310 \u00b0C \u2014 Zero-to-Ten temperature procedures active?"
+      "prompt_message": "Temperature is now {temperature_sealevel_c:.0f} \u00b0C"
     }
   },
   {

@@ -3,11 +3,13 @@
 # pylint: disable=missing-class-docstring
 # pylint: disable=missing-function-docstring
 
+import json
+
 from django.test import TestCase
 from django.urls import reverse
 
 from checklist.models import Attribute, FlightSession, FlightSessionAttribute
-from checklist.tests.testFactories import AttributeFactory
+from checklist.tests.testFactories import AttributeFactory, ProcedureFactory
 
 TEMP = "sim/weather/temperature_sealevel_c"
 AGL = "sim/flightmodel/position/y_agl"
@@ -92,3 +94,82 @@ class TestLiveRuleGate(TransitionTestBase):
         )
         self.set_datarefs({TEMP: -3, AGL: 0})
         self.assertEqual(self.get()["prompts"], [])
+
+
+class TestPromptMessage(TransitionTestBase):
+    def prompt(self):
+        return self.get()["prompts"][0]
+
+    def test_observed_value_is_filled_into_the_message(self):
+        Attribute.objects.filter(pk=self.attr.pk).update(
+            prompt_message="Temperature is now {temperature_sealevel_c:.0f} °C"
+        )
+        self.set_datarefs({TEMP: -2.4, AGL: 0})
+        self.assertEqual(self.prompt()["prompt_message"], "Temperature is now -2 °C")
+
+    def test_plain_message_is_returned_unchanged(self):
+        self.set_datarefs({TEMP: -3, AGL: 0})
+        self.assertEqual(self.prompt()["prompt_message"], "OAT below 0")
+
+    def test_malformed_template_falls_back_to_the_raw_message(self):
+        Attribute.objects.filter(pk=self.attr.pk).update(
+            prompt_message="Temperature {temperature_sealevel_c:.0f"
+        )
+        self.set_datarefs({TEMP: -3, AGL: 0})
+        self.assertEqual(self.prompt()["prompt_message"], "Temperature {temperature_sealevel_c:.0f")
+
+    def test_unknown_placeholder_stays_readable(self):
+        Attribute.objects.filter(pk=self.attr.pk).update(prompt_message="Wind {wind}")
+        self.set_datarefs({TEMP: -3, AGL: 0})
+        self.assertEqual(self.prompt()["prompt_message"], "Wind {wind}")
+
+
+class TestDecisions(TransitionTestBase):
+    def post(self, url, accepted):
+        return self.client.post(
+            url,
+            data=json.dumps({"decisions": [{"attr_id": self.attr.pk, "accepted": accepted}]}),
+            content_type="application/json",
+        )
+
+    def setUp(self):
+        super().setUp()
+        self.set_datarefs({TEMP: -3, AGL: 0})
+        self.urls = {
+            "procedure": reverse("checklist:detail", args=[ProcedureFactory(slug="pre").slug]),
+            "idle": reverse("checklist:idle"),
+        }
+
+    def test_match_activates_the_attribute_on_a_procedure_page(self):
+        self.assertEqual(self.post(self.urls["procedure"], True).status_code, 200)
+        fsa = FlightSessionAttribute.objects.get(flight_session=self.session, attribute=self.attr)
+        self.assertTrue(fsa.is_active)
+        self.assertEqual(fsa.source, "live_rule")
+
+    def test_match_on_the_idle_page_is_recorded_too(self):
+        # Idle used to ignore POST, so the decision was lost and the dialog
+        # came back on every later navigation.
+        self.assertEqual(self.post(self.urls["idle"], True).status_code, 200)
+        self.assertTrue(
+            FlightSessionAttribute.objects.get(
+                flight_session=self.session, attribute=self.attr
+            ).is_active
+        )
+
+    def test_keep_current_leaves_the_attribute_and_silences_the_prompt(self):
+        self.assertEqual(self.post(self.urls["idle"], False).status_code, 200)
+        self.assertFalse(
+            FlightSessionAttribute.objects.filter(
+                flight_session=self.session, attribute=self.attr, is_active=True
+            ).exists()
+        )
+        self.assertEqual(self.get()["prompts"], [])
+
+    def test_match_while_airborne_changes_nothing(self):
+        self.set_datarefs({TEMP: -3, AGL: 3500})
+        self.post(self.urls["procedure"], True)
+        self.assertFalse(
+            FlightSessionAttribute.objects.filter(
+                flight_session=self.session, attribute=self.attr
+            ).exists()
+        )
