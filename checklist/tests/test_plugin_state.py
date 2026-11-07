@@ -5,6 +5,7 @@
 
 import json
 from datetime import datetime, timezone
+from pathlib import Path
 
 from django.contrib.auth import get_user_model
 from django.test import TestCase
@@ -574,3 +575,53 @@ class TestPluginStateRequireAllVisible(_Base):
         self.assertIn(self.opt_item.pk, resp["checked"])
         self.assertNotIn(self.opt_item.pk, resp["skipped"])
         self.assertNotIn(self.req_item.pk, resp["checked"])
+
+
+class TestWindLoadItem(_Base):
+    """
+    CDU Preflight "Wind" (pk 213): loading winds into the FMC lights the EXEC
+    light, which is what ticks the item. Built from the shipped fixture so the
+    content and the engine behaviour cannot drift apart.
+    """
+
+    LIGHT = "laminar/B738/indicators/fms_exec_light_pilot"
+    PERF_RULE = {"dataref": "x/perf_init_page", "op": "eq", "value": 1}
+
+    def setUp(self):
+        super().setUp()
+        fixture = Path(__file__).resolve().parent.parent / "fixtures" / "checklist_content.json"
+        shipped = next(
+            o["fields"] for o in json.loads(fixture.read_text(encoding="utf-8"))
+            if o["model"] == "checklist.checkitem" and o["pk"] == 213
+        )
+        self.assertEqual(shipped["item"], "Wind")
+        self.assertEqual(shipped["attributes"], [4], "Wind must stay under Optional")
+        self.optional_attr = Attribute.objects.create(pk=4, title="Optional", order=1)
+        FlightSessionAttribute.objects.create(
+            flight_session=self.session, attribute=self.optional_attr, is_active=True
+        )
+        self.wind = CheckItemFactory(
+            procedure=self.procedure, step=17, attributes=[self.optional_attr],
+            auto_check_rule=shipped["auto_check_rule"],
+        )
+        # Next required item (Perf Init in the real procedure).
+        self.perf = CheckItemFactory(
+            procedure=self.procedure, step=20, auto_check_rule=self.PERF_RULE
+        )
+
+    def _poll(self, **datarefs):
+        body = self._valid_body(datarefs=datarefs)
+        return _post(self.client, body, key=self.raw_key).json()
+
+    def test_wind_ticks_itself_when_the_exec_light_comes_on(self):
+        self.assertIn(self.wind.pk, self._poll(**{self.LIGHT: 1})["checked"])
+
+    def test_wind_does_not_tick_while_the_exec_light_is_off(self):
+        resp = self._poll(**{self.LIGHT: 0})
+        self.assertNotIn(self.wind.pk, resp["checked"])
+        self.assertNotIn(self.wind.pk, resp["skipped"])
+
+    def test_wind_is_skipped_when_winds_are_never_loaded(self):
+        resp = self._poll(**{self.LIGHT: 0, "x/perf_init_page": 1})
+        self.assertIn(self.perf.pk, resp["checked"])
+        self.assertIn(self.wind.pk, resp["skipped"])
