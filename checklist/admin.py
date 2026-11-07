@@ -38,7 +38,7 @@ class AttributeAdmin(admin.ModelAdmin):
                        "is_user_preference", "over_ruled_by", "btn_color"],
         }),
         ("Live Rule", {
-            "fields": ["live_rule", "live_rule_mode", "prompt_message"],
+            "fields": ["live_rule_gate", "live_rule", "live_rule_mode", "prompt_message"],
             "classes": ["collapse"],
         }),
     ]

@@ -226,6 +226,19 @@ class TestPluginStateRuleEvaluation(_Base):
         resp = _post(self.client, self._valid_body(), key=self.raw_key)
         self.assertIn("sim/cockpit/switches/parking_brake", resp.json()["watch"])
 
+    def test_live_rule_gate_datarefs_are_in_watch(self):
+        # The gate's dataref (y_agl) appears in no live_rule; without being
+        # streamed the gate would read "missing" and silence every prompt.
+        AttributeFactory(
+            live_rule={"all": [{"dataref": "sim/weather/temperature_sealevel_c", "op": "lt", "value": 0}]},
+            live_rule_gate={"all": [{"dataref": "sim/flightmodel/position/y_agl", "op": "lt", "value": 152}]},
+            live_rule_mode="prompt_on_change",
+        )
+        resp = _post(self.client, self._valid_body(), key=self.raw_key)
+        watch = resp.json()["watch"]
+        self.assertIn("sim/weather/temperature_sealevel_c", watch)
+        self.assertIn("sim/flightmodel/position/y_agl", watch)
+
     def test_missing_dataref_in_state_does_not_check_item(self):
         item = CheckItemFactory(
             procedure=self.procedure, step=1, auto_check_rule=RULE_PARKING_BRAKE_ON

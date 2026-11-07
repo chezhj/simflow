@@ -418,6 +418,25 @@ def uncheck_view(request):
     })
 
 
+def _live_rule_applicable(attr, datarefs):
+    """
+    True when attr.live_rule may be acted on with this dataref snapshot.
+
+    A missing dataref evaluates to false, which for an already-active attribute
+    reads as "conditions no longer hold" and would prompt to deactivate it. So
+    nothing is considered unless every dataref the rule and its gate need is
+    actually present, and the gate (e.g. "on the ground") is true.
+    """
+    needed = set(collect_datarefs(attr.live_rule))
+    if attr.live_rule_gate:
+        needed.update(collect_datarefs(attr.live_rule_gate))
+    if any(path not in datarefs for path in needed):
+        return False
+    if attr.live_rule_gate and not evaluate_rule(attr.live_rule_gate, datarefs):
+        return False
+    return True
+
+
 @require_GET
 def attribute_transition_view(request):
     """
@@ -465,9 +484,12 @@ def attribute_transition_view(request):
         if attr_id_str in overrides:
             continue  # pilot has already decided for this session
 
+        if not _live_rule_applicable(attr, datarefs):
+            continue  # gate closed (e.g. airborne) or no sim data: leave alone
+
         rule_fires = evaluate_rule(attr.live_rule, datarefs)
 
-        fsa = FlightSessionAttribute.objects.filter(
+        fsa =FlightSessionAttribute.objects.filter(
             flight_session=session, attribute=attr
         ).first()
         currently_active = fsa.is_active if fsa else False
