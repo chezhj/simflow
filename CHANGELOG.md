@@ -1,3 +1,9 @@
+## v2.10.5 (2026-11-07)
+
+### Fix
+
+- **attributes**: skip temperature prompt in flight (#49)
+
 ## v2.10.4 (2026-10-22)
 
 ### Fix
