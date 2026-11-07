@@ -1,3 +1,9 @@
+## v2.10.6 (2026-11-07)
+
+### Fix
+
+- **content**: hold-short, wind and anti-ice content fixes (#51)
+
 ## v2.10.5 (2026-11-07)
 
 ### Fix
