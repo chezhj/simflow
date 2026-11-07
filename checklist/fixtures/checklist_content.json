@@ -5,9 +5,9 @@
     "fields": {
       "name": "Boeing 737-800",
       "icao_code": "B738",
-      "content_version": "1.5.0",
-      "release_notes": "- Anti-Ice and 0-10 \u00b0C conditions are only offered on the ground (new gate rule), so the profile popup no longer appears in flight\n- The popup now states the current temperature",
-      "updated_at": "2026-11-07T10:29:57.165028Z"
+      "content_version": "1.5.1",
+      "release_notes": "- Before Takeoff now opens at the hold-short line: the runway corridor is 120 m either side of the centreline (was 90 m)",
+      "updated_at": "2026-11-07T14:44:46.332081Z"
     }
   },
   {
@@ -80,7 +80,7 @@
             "crs": "laminar/B738/fms/ref_runway_crs",
             "ahead_m": 4000,
             "behind_m": 150,
-            "half_width_m": 90
+            "half_width_m": 120
           },
           {
             "dataref": "sim/flightmodel/position/y_agl",
