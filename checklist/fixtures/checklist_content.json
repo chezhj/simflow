@@ -5,9 +5,9 @@
     "fields": {
       "name": "Boeing 737-800",
       "icao_code": "B738",
-      "content_version": "1.5.2",
-      "release_notes": "- Before Takeoff now opens at the hold-short line: the runway corridor is 120 m either side of the centreline (was 90 m)\n- CDU preflight: the Wind item ticks itself when the winds are loaded (the FMC EXEC light comes on)",
-      "updated_at": "2026-11-07T16:16:36.252967Z"
+      "content_version": "1.5.3",
+      "release_notes": "- Before Takeoff now opens at the hold-short line: the runway corridor is 120 m either side of the centreline (was 90 m)\n- CDU preflight: the Wind item ticks itself when the winds are loaded (the FMC EXEC light comes on)\n- Before Taxi, 0-10 \u00b0C: engine and wing anti-ice read \"ON with visible moisture\" and continue on their own when there is little moisture\n- Before Taxi, sub-zero: wing and engine anti-ice now show for Anti-Ice Normal alone (they needed two exclusive conditions and never showed)\n- Takeoff: the cold-and-wet CONT option for the engine start switches now works (it read a misspelled dataref)",
+      "updated_at": "2026-11-07T16:34:52.773783Z"
     }
   },
   {
