@@ -5,9 +5,9 @@
     "fields": {
       "name": "Boeing 737-800",
       "icao_code": "B738",
-      "content_version": "1.4.2",
-      "release_notes": "- Fixed typo in evaluation rul for fix-es",
-      "updated_at": "2026-10-03T08:26:46.991505Z"
+      "content_version": "1.5.0",
+      "release_notes": "- Anti-Ice and 0-10 \u00b0C conditions are only offered on the ground (new gate rule), so the profile popup no longer appears in flight\n- The popup now states the current temperature",
+      "updated_at": "2026-11-07T10:29:57.165028Z"
     }
   },
   {
@@ -314,6 +314,7 @@
       "over_ruled_by": null,
       "btn_color": "#E01843",
       "live_rule": null,
+      "live_rule_gate": null,
       "live_rule_mode": null,
       "prompt_message": ""
     }
@@ -331,6 +332,7 @@
       "over_ruled_by": null,
       "btn_color": "#3FC381",
       "live_rule": null,
+      "live_rule_gate": null,
       "live_rule_mode": null,
       "prompt_message": ""
     }
@@ -348,6 +350,7 @@
       "over_ruled_by": null,
       "btn_color": "#1D8E2A",
       "live_rule": null,
+      "live_rule_gate": null,
       "live_rule_mode": null,
       "prompt_message": ""
     }
@@ -365,6 +368,7 @@
       "over_ruled_by": 8,
       "btn_color": "#19E40F",
       "live_rule": null,
+      "live_rule_gate": null,
       "live_rule_mode": null,
       "prompt_message": ""
     }
@@ -382,6 +386,7 @@
       "over_ruled_by": 11,
       "btn_color": "#18DD29",
       "live_rule": null,
+      "live_rule_gate": null,
       "live_rule_mode": null,
       "prompt_message": ""
     }
@@ -404,7 +409,11 @@
             "dataref": "sim/weather/temperature_sealevel_c",
             "op": "lt",
             "value": 0
-          },
+          }
+        ]
+      },
+      "live_rule_gate": {
+        "all": [
           {
             "dataref": "sim/flightmodel/position/y_agl",
             "op": "lt",
@@ -413,7 +422,7 @@
         ]
       },
       "live_rule_mode": "prompt_on_change",
-      "prompt_message": "OAT below 0 \u00b0C \u2014 Anti-Ice Normal procedures active?"
+      "prompt_message": "Temperature is now {temperature_sealevel_c:.0f} \u00b0C"
     }
   },
   {
@@ -429,6 +438,7 @@
       "over_ruled_by": null,
       "btn_color": "#d6cc09",
       "live_rule": null,
+      "live_rule_gate": null,
       "live_rule_mode": null,
       "prompt_message": ""
     }
@@ -456,7 +466,11 @@
             "dataref": "sim/weather/temperature_sealevel_c",
             "op": "lte",
             "value": 10
-          },
+          }
+        ]
+      },
+      "live_rule_gate": {
+        "all": [
           {
             "dataref": "sim/flightmodel/position/y_agl",
             "op": "lt",
@@ -465,7 +479,7 @@
         ]
       },
       "live_rule_mode": "prompt_on_change",
-      "prompt_message": "OAT 0\u201310 \u00b0C \u2014 Zero-to-Ten temperature procedures active?"
+      "prompt_message": "Temperature is now {temperature_sealevel_c:.0f} \u00b0C"
     }
   },
   {
@@ -481,6 +495,7 @@
       "over_ruled_by": 9,
       "btn_color": "#194D33",
       "live_rule": null,
+      "live_rule_gate": null,
       "live_rule_mode": null,
       "prompt_message": ""
     }
@@ -498,6 +513,7 @@
       "over_ruled_by": null,
       "btn_color": "#098244",
       "live_rule": null,
+      "live_rule_gate": null,
       "live_rule_mode": null,
       "prompt_message": ""
     }
@@ -515,6 +531,7 @@
       "over_ruled_by": null,
       "btn_color": "#9BAD20",
       "live_rule": null,
+      "live_rule_gate": null,
       "live_rule_mode": null,
       "prompt_message": ""
     }
@@ -532,6 +549,7 @@
       "over_ruled_by": 7,
       "btn_color": "#5588E5",
       "live_rule": null,
+      "live_rule_gate": null,
       "live_rule_mode": null,
       "prompt_message": ""
     }
@@ -549,6 +567,7 @@
       "over_ruled_by": null,
       "btn_color": "#7B5EA7",
       "live_rule": null,
+      "live_rule_gate": null,
       "live_rule_mode": null,
       "prompt_message": ""
     }
@@ -570,6 +589,7 @@
         "op": "gt",
         "value": 100
       },
+      "live_rule_gate": null,
       "live_rule_mode": "activate_only",
       "prompt_message": ""
     }
@@ -587,6 +607,7 @@
       "over_ruled_by": null,
       "btn_color": "#444444",
       "live_rule": null,
+      "live_rule_gate": null,
       "live_rule_mode": null,
       "prompt_message": ""
     }
@@ -604,6 +625,7 @@
       "over_ruled_by": 20,
       "btn_color": "#444444",
       "live_rule": null,
+      "live_rule_gate": null,
       "live_rule_mode": null,
       "prompt_message": ""
     }
@@ -621,6 +643,7 @@
       "over_ruled_by": 2,
       "btn_color": "#888888",
       "live_rule": null,
+      "live_rule_gate": null,
       "live_rule_mode": null,
       "prompt_message": ""
     }
@@ -638,6 +661,7 @@
       "over_ruled_by": null,
       "btn_color": "#194D33",
       "live_rule": null,
+      "live_rule_gate": null,
       "live_rule_mode": null,
       "prompt_message": ""
     }
@@ -655,6 +679,7 @@
       "over_ruled_by": null,
       "btn_color": "#1D5E8E",
       "live_rule": null,
+      "live_rule_gate": null,
       "live_rule_mode": null,
       "prompt_message": ""
     }

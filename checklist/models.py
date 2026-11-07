@@ -459,6 +459,13 @@ class Attribute(models.Model):
         null=True,
         help_text="Dataref rule evaluated at procedure transitions to auto-activate or prompt.",
     )
+    live_rule_gate = models.JSONField(
+        blank=True,
+        null=True,
+        help_text="Rule that must be true before live_rule is considered at all "
+                  "(e.g. on the ground). While the gate is false, or its datarefs "
+                  "are missing, the attribute is left alone: no prompt, no change.",
+    )
     live_rule_mode = models.CharField(
         max_length=20,
         choices=LIVE_RULE_MODE_CHOICES,

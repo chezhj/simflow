@@ -605,6 +605,8 @@ def plugin_state(request):
     # attribute_transition can evaluate rules even before a phase is active.
     for attr in Attribute.objects.exclude(live_rule=None):
         watch.extend(collect_datarefs(attr.live_rule))
+        if attr.live_rule_gate:
+            watch.extend(collect_datarefs(attr.live_rule_gate))
 
     # Always stream idle-page display datarefs (altitude, IAS, heading, VS).
     for dr in IdleDataref.objects.values_list("dataref_path", flat=True):

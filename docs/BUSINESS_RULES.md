@@ -321,14 +321,22 @@ Two attribute modes:
 | `activate_only` | If rule fires AND attribute is currently inactive → activate silently. No prompt. |
 | `prompt_on_change` | If rule result ≠ current active state → present prompt to pilot. |
 
-**Pilot overrides:** Stored in `FlightSession.pilot_overrides` as `{str(attr_id): bool}`. An attribute with an entry here is never prompted again in the same session.
+**Gate (`Attribute.live_rule_gate`):** an optional rule that must be true before `live_rule` is considered at all. The temperature attributes (Anti-Ice, 0–10 °C) gate on being on the ground (`y_agl < 152`): in flight the temperature keeps changing but the icing procedures no longer depend on it, so nothing is prompted. An attribute is also left alone when any dataref its rule or gate needs is missing from the snapshot (no sim data). Without this, a false rule on an already-active attribute read as "conditions ended" and prompted to deactivate it. The gate's datarefs are added to the plugin's watch list.
 
-**Accepting a prompt:** Re-evaluates `live_rule` and applies the result to `FlightSessionAttribute` with `source="live_rule"`.
+**The dialog:** one dialog per navigation, however many attributes changed. It states the current conditions once (`prompt_message`, with observed values filled in through placeholders named after the last segment of a dataref, e.g. `Temperature is now {temperature_sealevel_c:.0f} °C`), lists what *Match conditions* would activate or deactivate, and offers exactly two choices:
 
-**Rejecting a prompt:** Records rejection in `pilot_overrides`, attribute state unchanged.  
+| Choice | Effect |
+| --- | --- |
+| **Match conditions** | Posts `accepted: true` for every prompt: `live_rule` is re-evaluated and applied to `FlightSessionAttribute` with `source="live_rule"` (skipped if the gate has closed in the meantime). |
+| **Keep current** | Posts `accepted: false` for every prompt: attribute state unchanged. |
+
+Either choice continues to the page the pilot was heading for. The decision is POSTed to that page (a procedure page or the idle page).
+
+**Pilot overrides:** every decision, either way, is stored in `FlightSession.pilot_overrides` as `{str(attr_id): bool}`. An attribute with an entry here is never prompted again in the same session, so *Keep current* also means "stop asking", even if the temperature later moves into another band. This is deliberate: remembering which band change was accepted would need more state.
+
 <br/>
 
-Source: `api_views.py — attribute_transition_view()`, `views.py — _apply_attribute_overrides()`
+Source: `api_views.py — attribute_transition_view()`, `views.py — _apply_attribute_overrides()`, `static/checklist/simflow-transition.js`
 
 * * *
 

@@ -133,6 +133,40 @@
         };
     }
 
+    /**
+     * Shape the prompts from /api/attribute-transition/ for the conditions dialog.
+     *
+     * The dialog states what the conditions are once (`reasons`, de-duplicated:
+     * several attributes usually react to the same temperature change) and then
+     * what "Match conditions" would do (`changes`). Pure so it can be tested
+     * without a DOM.
+     */
+    function summarizeTransition(prompts) {
+        var reasons = [];
+        var changes = [];
+        (prompts || []).forEach(function (p) {
+            var reason = p.prompt_message || '';
+            if (reason && reasons.indexOf(reason) === -1) { reasons.push(reason); }
+            changes.push({
+                attrId: p.attr_id,
+                title: p.attr_title || '',
+                activate: !!p.suggested_active,
+            });
+        });
+        return { reasons: reasons, changes: changes };
+    }
+
+    /**
+     * The POST body for the dialog's single decision: one answer for every
+     * prompt. Matching applies the suggested state to all of them; keeping the
+     * current profile records a rejection for all of them.
+     */
+    function transitionDecisions(prompts, accepted) {
+        return (prompts || []).map(function (p) {
+            return { attr_id: p.attr_id, accepted: !!accepted };
+        });
+    }
+
     /** readConfig() against the live document. */
     function config(doc) {
         doc = defaultDoc(doc);
@@ -148,6 +182,8 @@
         config: config,
         RECONNECT_GRACE: RECONNECT_GRACE,
         pluginUpdateNotice: pluginUpdateNotice,
+        summarizeTransition: summarizeTransition,
+        transitionDecisions: transitionDecisions,
         DEFAULT_POLL_INTERVAL_MS: DEFAULT_POLL_INTERVAL_MS,
     };
 }));

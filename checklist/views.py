@@ -600,6 +600,7 @@ def _apply_attribute_overrides(request):
     All decisions are merged into FlightSession.pilot_overrides for the duration
     of the session so the same attribute is never prompted again.
     """
+    from .api_views import _live_rule_applicable
     from .plugin_views import get_datarefs
 
     session_key = request.session.get("flight_session_key")
@@ -635,7 +636,7 @@ def _apply_attribute_overrides(request):
                 attr = Attribute.objects.get(pk=attr_id)
             except Attribute.DoesNotExist:
                 continue
-            if attr.live_rule:
+            if attr.live_rule and _live_rule_applicable(attr, datarefs):
                 new_active = evaluate_rule(attr.live_rule, datarefs)
                 FlightSessionAttribute.objects.update_or_create(
                     flight_session=flight_session,
@@ -853,7 +854,13 @@ def idle_view(request):
     Displays live flight data (altitude, IAS, heading, VS) from the plugin's
     last dataref snapshot and keeps the poll loop running so conditional
     procedures can unlock into the nav bar.
+
+    POST carries the conditions-changed dialog's decision, as for a procedure
+    page: navigating to idle also goes through that dialog.
     """
+    if request.method == "POST":
+        return _apply_attribute_overrides(request)
+
     session_key = request.session.get("flight_session_key")
     if not session_key:
         return HttpResponseRedirect(reverse("checklist:start"))

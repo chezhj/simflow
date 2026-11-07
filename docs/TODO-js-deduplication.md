@@ -1,7 +1,8 @@
 # TODO — finish de-duplicating the inline browser JS (stages 3 & 4)
 
 **Created**: 2026-09-11
-**Status**: Stages 3 and 4 not started. Stages 1 and 2 are done, **merged to
+**Status**: Stage 3 done (the conditions-changed dialog is now `simflow-transition.js` + the
+`_attr_modal.html` partial, issue #45). Stage 4 not started. Stages 1 and 2 are done, **merged to
 `master` (`6f1a670`) and released** — the branch note below is historical.
 **Branch the earlier work was on**: `claude/pensive-curie-l2l2sq`, since merged.
 **Background reading**: `design-decisions/20260911-server-authoritative-phase-state.md` (ADR-003)
@@ -41,7 +42,12 @@ Current inline JS: `detail.html` ~790 lines, `idle.html` ~299 lines.
 
 ---
 
-## Stage 3 — move the attribute-transition modal
+## Stage 3 — move the attribute-transition modal — DONE
+
+> Done with #44/#45. The dialog markup was folded into
+> `templates/checklist/_attr_modal.html` as well (both pages now render the same
+> dialog), and its logic split between `simflow-core.js` (pure, tested) and
+> `simflow-transition.js` (DOM). The notes below are the original plan.
 
 **What**: `navigateWithTransition` + `showTransitionModal` + the three modal button
 handlers → a new `checklist/static/checklist/simflow-transition.js`.
