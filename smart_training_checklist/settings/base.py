@@ -87,6 +87,17 @@ DATABASES = {
     "default": {
         "ENGINE": "django.db.backends.sqlite3",
         "NAME": BASE_DIR / "db.sqlite3",
+        "OPTIONS": {
+            # SQLite has one writer for the whole file, whichever rows are
+            # touched. A DEFERRED transaction (the default) that reads and then
+            # writes — update_or_create does exactly that — fails at once with
+            # "database is locked" if anyone commits in between, and the busy
+            # timeout is never consulted. IMMEDIATE takes the write lock at
+            # BEGIN, so writers queue instead of failing; timeout is how long
+            # one will wait (the default is 5 s). See docs/PRE_RELEASE_PLAN.md 4.1.
+            "timeout": 20,
+            "transaction_mode": "IMMEDIATE",
+        },
     }
 }
 
