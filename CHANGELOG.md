@@ -1,3 +1,9 @@
+## v2.10.7 (2026-11-08)
+
+### Fix
+
+- **db**: use immediate transactions and longer sqlite timeout (#52)
+
 ## v2.10.6 (2026-11-07)
 
 ### Fix
