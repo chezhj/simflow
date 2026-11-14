@@ -102,7 +102,7 @@
                     <span class="idle-next-arrow">→</span>
                 </a>
                 {% endif %}
-                {% for proc in all_procedures %}{% if proc.show_rule %}
+                {% for proc in all_procedures %}{% if proc.show_rule and proc.slug != next_linear_proc.slug %}
                 <a class="idle-next-btn idle-next-btn--conditional js-hidden js-nav-btn"
                    href="{% url 'checklist:detail' proc.slug %}"
                    data-conditional-slug="{{ proc.slug }}">

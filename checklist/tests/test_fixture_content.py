@@ -269,3 +269,36 @@ class TestLandingSpeedBrakesArmed(SimpleTestCase):
         rule = _item(398)["auto_check_rule"]
         self.assertTrue(evaluate_rule(rule, {self.SPEEDBRAKE: -0.5}))
         self.assertFalse(evaluate_rule(rule, {self.SPEEDBRAKE: 0}))
+
+
+class TestProcedureCategories(SimpleTestCase):
+    """The fixture carries category explicitly: loaddata resets a missing field to
+    its default, which would undo the picker grouping (and the idle page's idea of
+    which procedures belong to the flow) on every deploy."""
+
+    OUT_OF_FLOW = {"go-around", "cruise-procedure-waypoint-reached"}
+    RULE_TRIGGERED_FLOW = {
+        "before-takeoff-procedure", "precruise-procedure", "cruise-entry",
+        "descent-procedure", "descent-10k", "after-landing-procedure",
+    }
+
+    def _procedures(self):
+        return {
+            o["fields"]["slug"]: o["fields"]
+            for o in CONTENT if o["model"] == "checklist.procedure"
+        }
+
+    def test_every_procedure_declares_a_category(self):
+        for slug, fields in self._procedures().items():
+            self.assertIn("category", fields, slug)
+
+    def test_out_of_flow_procedures_are_situational(self):
+        procs = self._procedures()
+        for slug in self.OUT_OF_FLOW:
+            self.assertEqual(procs[slug]["category"], "situational", slug)
+
+    def test_rule_triggered_flow_procedures_are_normal(self):
+        procs = self._procedures()
+        for slug in self.RULE_TRIGGERED_FLOW:
+            self.assertIsNotNone(procs[slug]["show_rule"], slug)
+            self.assertEqual(procs[slug]["category"], "normal", slug)

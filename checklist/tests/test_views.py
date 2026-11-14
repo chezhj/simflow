@@ -886,6 +886,7 @@ class TestIdleFirstOpenProcedure(ViewTestCase):
         cond = self.Procedure.objects.create(
             title="Cond", step=4, slug="idle-cond", sop=self.sop,
             show_rule={"dataref": "x", "op": "eq", "value": 1},
+            category=self.Procedure.SITUATIONAL,
         )
         CheckItemFactory(procedure=cond)
         self._state(self.item_a)
@@ -894,6 +895,50 @@ class TestIdleFirstOpenProcedure(ViewTestCase):
         ctx = self._idle()
         self.assertEqual(ctx["scroll_target_slug"], "idle-b")
         self.assertEqual(ctx["next_linear_proc"].slug, "idle-b")
+
+    def _conditional(self, step, slug, category=None):
+        proc = self.Procedure.objects.create(
+            title=slug, step=step, slug=slug, sop=self.sop,
+            show_rule={"dataref": "x", "op": "eq", "value": 1},
+            category=category or self.Procedure.NORMAL,
+        )
+        return proc, CheckItemFactory(procedure=proc)
+
+    def test_rule_triggered_flow_procedure_ahead_of_progress_is_next(self):
+        """Cruise entry style: conditional but part of the flow (#58)."""
+        cruise, _ = self._conditional(15, "idle-cruise")
+        self.Procedure.objects.filter(pk=self.proc_c.pk).update(step=30)
+        self._state(self.item_a)
+        self._state(self.item_b)
+        ctx = self._idle()
+        self.assertEqual(ctx["scroll_target_slug"], "idle-cruise")
+        self.assertEqual(ctx["next_linear_proc"].slug, "idle-cruise")
+
+    def test_unfired_rule_procedure_behind_progress_is_ignored(self):
+        """Before-takeoff that never fired must not hold the pointer back."""
+        self._conditional(2, "idle-unfired")
+        self.Procedure.objects.filter(pk=self.proc_b.pk).update(step=3)
+        self.Procedure.objects.filter(pk=self.proc_c.pk).update(step=4)
+        self._state(self.item_a)
+        self._state(self.item_b)
+        self.assertEqual(self._idle()["scroll_target_slug"], "idle-c")
+
+    def test_rule_procedure_ahead_of_progress_but_before_next_linear(self):
+        """Nothing in the target's way: still on a plain linear procedure."""
+        self._conditional(10, "idle-late")
+        self._state(self.item_a)
+        self.assertEqual(self._idle()["scroll_target_slug"], "idle-b")
+
+    def test_rendered_page_has_no_duplicate_button_for_conditional_next(self):
+        cruise, _ = self._conditional(15, "idle-cruise")
+        self._state(self.item_a)
+        self._state(self.item_b)
+        self._state(self.item_c)
+        response = idle_view(self.request)
+        response.render()
+        html = response.content.decode()
+        buttons = [b for b in html.split("<a ") if "idle-next-btn" in b.split(">")[0]]
+        self.assertEqual(len([b for b in buttons if "/idle-cruise" in b.split(">")[0]]), 1)
 
     def test_non_normal_category_is_ignored(self):
         emergency = self.Procedure.objects.create(

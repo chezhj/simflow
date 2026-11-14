@@ -710,23 +710,29 @@ def _visible_items(items, active_attr_ids):
 
 
 def _first_open_procedure(flight_session):
-    """The procedure the pilot should continue with in the linear flow.
+    """The procedure the pilot should continue with.
 
-    Returns the first NORMAL, non-conditional procedure (by step) that still has
+    Walks the NORMAL procedures by step and returns the first one that still has
     a visible item neither checked nor skipped. When everything is complete the
-    last linear procedure is returned, and ``None`` when there are none.
+    last NORMAL procedure is returned, and ``None`` when there are none.
+
+    Rule-triggered (``show_rule``) procedures count too, because several of them
+    are ordinary steps of the flow that merely fire on a condition (cruise entry,
+    descent, ...). They only count at or beyond the furthest procedure the pilot
+    has made progress in, so one that never fired (before takeoff, once takeoff
+    is under way) does not hold the pointer back for the rest of the flight.
+    Out-of-flow procedures (go-around, waypoint reached) are SITUATIONAL and
+    never count.
 
     Unlike ``FlightSession.active_phase`` this ignores detours: opening an
-    out-of-flow (conditional or situational) procedure does not move it.
+    out-of-flow procedure does not move it.
     """
-    linear = list(
-        Procedure.objects.filter(
-            show_rule__isnull=True, category=Procedure.NORMAL
-        )
+    flow = list(
+        Procedure.objects.filter(category=Procedure.NORMAL)
         .order_by("step")
         .prefetch_related("checkitem_set__attributes")
     )
-    if not linear:
+    if not flow:
         return None
 
     active_attr_ids = list(
@@ -739,11 +745,19 @@ def _first_open_procedure(flight_session):
             flight_session=flight_session, status__in=["checked", "skipped"]
         ).values_list("checklist_item_id", flat=True)
     )
-    for proc in linear:
+
+    progress_step = 0
+    for proc in flow:
+        if any(item.id in done_item_ids for item in proc.checkitem_set.all()):
+            progress_step = max(progress_step, proc.step)
+
+    for proc in flow:
+        if proc.show_rule is not None and proc.step < progress_step:
+            continue
         items = _visible_items(proc.checkitem_set.all(), active_attr_ids)
         if any(item.id not in done_item_ids for item in items):
             return proc
-    return linear[-1]
+    return flow[-1]
 
 
 def procedure_detail(request, slug=None, pk=None):

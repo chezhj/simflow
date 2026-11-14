@@ -20,6 +20,7 @@
       "show_expression": "",
       "auto_continue": true,
       "show_rule": null,
+      "category": "normal",
       "sop": 1
     }
   },
@@ -33,6 +34,7 @@
       "show_expression": "",
       "auto_continue": true,
       "show_rule": null,
+      "category": "normal",
       "sop": 1
     }
   },
@@ -46,6 +48,7 @@
       "show_expression": "",
       "auto_continue": true,
       "show_rule": null,
+      "category": "normal",
       "sop": 1
     }
   },
@@ -59,6 +62,7 @@
       "show_expression": "",
       "auto_continue": false,
       "show_rule": null,
+      "category": "normal",
       "sop": 1
     }
   },
@@ -94,6 +98,7 @@
           }
         ]
       },
+      "category": "normal",
       "sop": 1
     }
   },
@@ -107,6 +112,7 @@
       "show_expression": "",
       "auto_continue": false,
       "show_rule": null,
+      "category": "normal",
       "sop": 1
     }
   },
@@ -120,6 +126,7 @@
       "show_expression": "",
       "auto_continue": true,
       "show_rule": null,
+      "category": "normal",
       "sop": 1
     }
   },
@@ -133,6 +140,7 @@
       "show_expression": "",
       "auto_continue": true,
       "show_rule": null,
+      "category": "normal",
       "sop": 1
     }
   },
@@ -146,6 +154,7 @@
       "show_expression": "",
       "auto_continue": true,
       "show_rule": null,
+      "category": "normal",
       "sop": 1
     }
   },
@@ -159,6 +168,7 @@
       "show_expression": "",
       "auto_continue": true,
       "show_rule": null,
+      "category": "normal",
       "sop": 1
     }
   },
@@ -205,6 +215,7 @@
           }
         ]
       },
+      "category": "normal",
       "sop": 1
     }
   },
@@ -218,6 +229,7 @@
       "show_expression": "",
       "auto_continue": true,
       "show_rule": null,
+      "category": "normal",
       "sop": 1
     }
   },
@@ -254,6 +266,7 @@
           }
         ]
       },
+      "category": "situational",
       "sop": 1
     }
   },
@@ -267,6 +280,7 @@
       "show_expression": "",
       "auto_continue": true,
       "show_rule": null,
+      "category": "normal",
       "sop": 1
     }
   },
@@ -298,6 +312,7 @@
           }
         ]
       },
+      "category": "situational",
       "sop": 1
     }
   },
@@ -7534,6 +7549,7 @@
           }
         ]
       },
+      "category": "normal",
       "sop": 1
     }
   },
@@ -7566,6 +7582,7 @@
           }
         ]
       },
+      "category": "normal",
       "sop": 1
     }
   },
@@ -7579,6 +7596,7 @@
       "show_expression": "",
       "auto_continue": false,
       "show_rule": null,
+      "category": "normal",
       "sop": 1
     }
   },
@@ -7592,6 +7610,7 @@
       "show_expression": "",
       "auto_continue": false,
       "show_rule": null,
+      "category": "normal",
       "sop": 1
     }
   },
@@ -7623,6 +7642,7 @@
           }
         ]
       },
+      "category": "normal",
       "sop": 1
     }
   },
@@ -7636,6 +7656,7 @@
       "show_expression": "",
       "auto_continue": false,
       "show_rule": null,
+      "category": "normal",
       "sop": 1
     }
   },
@@ -7649,6 +7670,7 @@
       "show_expression": "",
       "auto_continue": false,
       "show_rule": null,
+      "category": "normal",
       "sop": 1
     }
   },
@@ -7690,6 +7712,7 @@
           }
         ]
       },
+      "category": "normal",
       "sop": 1
     }
   },
