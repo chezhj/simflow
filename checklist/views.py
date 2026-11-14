@@ -3,6 +3,7 @@ Base views for checklist
 """
 
 import json
+from datetime import datetime, timezone
 from time import time
 
 from django.conf import settings
@@ -44,6 +45,55 @@ _OFP_BLEED_OFF_TITLE = "Short Runway"
 _OFP_NEVER_DERIVE = {"VA", "Online"}
 
 
+# Sim connection / temperature source. A plugin that has posted within this many
+# seconds counts as connected (same threshold as the browser poll).
+_SIM_FRESH_SECONDS = 5
+_SIM_TEMP_DATAREF = "sim/weather/temperature_sealevel_c"
+
+
+def _temp_band_ids() -> set[int]:
+    """IDs of the attributes that represent a temperature band."""
+    titles = {title for _, title in _OFP_TEMP_RULES}
+    return set(
+        Attribute.objects.filter(title__in=titles).values_list("id", flat=True)
+    )
+
+
+def _derive_temp_attrib_ids(temp: float) -> set[int]:
+    """Attribute IDs of the temperature band that applies to ``temp`` (°C)."""
+    attr_by_title = {
+        a.title: a.id
+        for a in Attribute.objects.filter(
+            title__in={title for _, title in _OFP_TEMP_RULES}
+        )
+    }
+    for condition, title in _OFP_TEMP_RULES:
+        if condition(temp):
+            return {attr_by_title[title]} if title in attr_by_title else set()
+    return set()  # only one temperature band can apply
+
+
+def _sim_temperature(flight_session) -> float | None:
+    """
+    Sea-level temperature (°C) reported by the connected sim, or None.
+
+    None when there is no session, the plugin has not been heard from recently
+    (no active connection) or it did not report a temperature. Callers then fall
+    back to the SimBrief plan.
+    """
+    if flight_session is None or not flight_session.last_plugin_contact:
+        return None
+    age = (
+        datetime.now(tz=timezone.utc) - flight_session.last_plugin_contact
+    ).total_seconds()
+    if age >= _SIM_FRESH_SECONDS:
+        return None
+    value = (flight_session.last_datarefs or {}).get(_SIM_TEMP_DATAREF)
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        return None
+    return float(value)
+
+
 def _derive_ofp_attrib_ids(sb_temp: str, sb_bleed: str) -> set[int]:
     """
     Return the set of Attribute IDs that the SimBrief OFP implies should be active.
@@ -59,11 +109,7 @@ def _derive_ofp_attrib_ids(sb_temp: str, sb_bleed: str) -> set[int]:
     if sb_temp:
         try:
             temp = float(sb_temp.replace("°C", "").strip())
-            for condition, title in _OFP_TEMP_RULES:
-                if condition(temp):
-                    if title in attr_by_title:
-                        derived.add(attr_by_title[title])
-                    break  # only one temperature band can apply
+            derived |= _derive_temp_attrib_ids(temp)
         except ValueError:
             pass
 
@@ -419,6 +465,23 @@ def profile_view(request):
                 existing_session = FlightSession.objects.get(
                     session_key=existing_key, is_active=True
                 )
+                sim_temp = _sim_temperature(existing_session)
+                if sim_temp is not None:
+                    # Sim is connected: its reported temperature, not SimBrief's,
+                    # is the reference. A band the pilot sets differently is a
+                    # deliberate override and silences the live prompt for it.
+                    ofp_ids = _derive_temp_attrib_ids(sim_temp) | (
+                        ofp_ids - _temp_band_ids()
+                    )
+                    overrides = dict(existing_session.pilot_overrides or {})
+                    for band_id in _temp_band_ids():
+                        chosen = band_id in selected_ids
+                        if chosen != (band_id in ofp_ids):
+                            overrides[str(band_id)] = chosen
+                        else:
+                            overrides.pop(str(band_id), None)
+                    existing_session.pilot_overrides = overrides
+                    existing_session.save(update_fields=["pilot_overrides"])
                 _update_session_attributes(
                     existing_session, selected_ids, ofp_ids, user_default_ids
                 )
@@ -536,6 +599,10 @@ def profile_view(request):
         except FlightSession.DoesNotExist:
             pass
 
+    # Where the temperature band comes from: "sim" while connected, else the plan.
+    temp_source = "simbrief" if request.session.get("sb_temp") else ""
+    temp_value = None
+
     # Pre-checked attribute IDs.
     # OFP-derived IDs are applied when a plan was just loaded; after that the
     # session's own state wins so a pilot's override is not undone on every visit.
@@ -546,7 +613,20 @@ def profile_view(request):
             ).values_list("attribute_id", flat=True)
         )
         prechecked_ids = session_active_ids
-        if ofp_derived_fresh:
+        sim_temp = _sim_temperature(active_flight_session)
+        if sim_temp is not None:
+            # Connected: the temperature the sim reports decides the band, unless
+            # the pilot already chose one by hand this flight.
+            temp_source = "sim"
+            temp_value = sim_temp
+            live_ids = _derive_temp_attrib_ids(sim_temp)
+            overrides = active_flight_session.pilot_overrides or {}
+            band_ids = _temp_band_ids()
+            prechecked_ids = prechecked_ids - band_ids
+            for band_id in band_ids:
+                if overrides.get(str(band_id), band_id in live_ids):
+                    prechecked_ids = prechecked_ids | {band_id}
+        elif ofp_derived_fresh:
             prechecked_ids = prechecked_ids | ofp_derived_ids
         dual_mode_active = active_flight_session.pilot_role != "SOLO"
     else:
@@ -572,6 +652,8 @@ def profile_view(request):
         "prechecked_ids": prechecked_ids,
         "dual_mode_active": dual_mode_active,
         "ofp_mismatch": ofp_mismatch,
+        "temp_source": temp_source,
+        "sim_temp": temp_value,
     }
     return TemplateResponse(request, "checklist/profile.html", context)
 
