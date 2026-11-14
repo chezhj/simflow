@@ -1,3 +1,10 @@
+## v2.10.8 (2026-11-14)
+
+### Fix
+
+- **idle**: scroll sidebar to first open procedure (#61)
+- **content**: shutdown, landing and ground-services checklist fixes (#60)
+
 ## v2.10.7 (2026-11-08)
 
 ### Fix
