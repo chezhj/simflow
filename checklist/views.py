@@ -130,9 +130,14 @@ def _resolve_active_ids(
     """
     Compute the final set of active attribute IDs.
 
-    Starts from the explicitly chosen set (selected + OFP-derived), then
-    auto-activates invisible defaults (show=False) whose over_ruled_by attribute
-    is not already active.
+    Starts from the explicitly chosen set, then auto-activates invisible
+    defaults (show=False) whose over_ruled_by attribute is not already active.
+
+    ofp_attr_ids are only used by callers to label the source of a value. They are
+    deliberately NOT added to the active set: the form pre-checks OFP-derived
+    attributes, so a derived value the pilot kept is already in selected_attr_ids,
+    and one the pilot unchecked must stay off (otherwise the SimBrief temperature
+    band can never be overruled from the profile).
 
     user_default_ids are intentionally excluded here: they pre-seed the form
     checkboxes, so if the user kept a default it is already in selected_attr_ids.
@@ -144,13 +149,41 @@ def _resolve_active_ids(
     Example: AboveZero (show=False, over_ruled_by=Anti-Ice Normal) is activated
     automatically whenever Anti-Ice Normal is not selected.
     """
-    active = set(selected_attr_ids) | ofp_attr_ids
+    active = set(selected_attr_ids)
     for attr in Attribute.objects.filter(show=False):
         if attr.live_rule_mode:
             continue  # plugin-driven: starts OFF, activated by live_rule evaluation
         if attr.over_ruled_by_id is None or attr.over_ruled_by_id not in active:
             active.add(attr.id)
     return active
+
+
+def sync_overruled_attributes(flight_session) -> None:
+    """
+    Re-derive the hidden (show=False) over-ruled attributes of a flight session
+    from the current state of their over_ruled_by attribute.
+
+    Needed whenever a visible attribute is flipped after the session was created
+    (e.g. the live temperature prompt turns Anti-Ice off): its dependants
+    (AboveZero, Above10, ...) would otherwise keep their old value and the
+    checklist would not change. Plugin-driven attributes (live_rule_mode) are left
+    alone.
+    """
+    states = dict(
+        FlightSessionAttribute.objects.filter(flight_session=flight_session)
+        .values_list("attribute_id", "is_active")
+    )
+    for attr in Attribute.objects.filter(show=False, over_ruled_by__isnull=False):
+        if attr.live_rule_mode:
+            continue
+        should_be_active = not states.get(attr.over_ruled_by_id, False)
+        if states.get(attr.id) == should_be_active:
+            continue
+        FlightSessionAttribute.objects.update_or_create(
+            flight_session=flight_session,
+            attribute=attr,
+            defaults={"is_active": should_be_active},
+        )
 
 
 def _update_session_attributes(
@@ -284,6 +317,8 @@ def _fetch_and_cache_simbrief(request, simbrief_id: str) -> None:
         request.session["sb_temp"], request.session["sb_bleed"]
     )
     request.session["sb_derived_attribs"] = list(derived)
+    # A new plan re-seeds the profile toggles once; afterwards the pilot's choice wins.
+    request.session["sb_derived_fresh"] = True
     request.session["sb_error"] = getattr(sb, "error_message", "") or ""
 
 
@@ -471,6 +506,7 @@ def profile_view(request):
     ofp_mismatch = request.session.pop("sb_ofp_mismatch", False)
 
     ofp_derived_ids = set(request.session.get("sb_derived_attribs", []))
+    ofp_derived_fresh = request.session.pop("sb_derived_fresh", False)
     # Conditions: flight-specific (not user preference); General: user preference defaults
     # SoloPilot is show=True only so it acts as a DualPilot overruler (like the
     # other overrulers); it is crew-derived, never a picker option, so hide it.
@@ -501,14 +537,17 @@ def profile_view(request):
             pass
 
     # Pre-checked attribute IDs.
-    # OFP-derived IDs are always included so loading a new plan updates the toggles.
+    # OFP-derived IDs are applied when a plan was just loaded; after that the
+    # session's own state wins so a pilot's override is not undone on every visit.
     if active_flight_session:
         session_active_ids = set(
             FlightSessionAttribute.objects.filter(
                 flight_session=active_flight_session, is_active=True
             ).values_list("attribute_id", flat=True)
         )
-        prechecked_ids = session_active_ids | ofp_derived_ids
+        prechecked_ids = session_active_ids
+        if ofp_derived_fresh:
+            prechecked_ids = prechecked_ids | ofp_derived_ids
         dual_mode_active = active_flight_session.pilot_role != "SOLO"
     else:
         prechecked_ids = ofp_derived_ids | user_default_ids
@@ -568,6 +607,7 @@ _FLIGHT_SESSION_KEYS = [
     "sb_block_fuel",
     "sb_finres_altn",
     "sb_derived_attribs",
+    "sb_derived_fresh",
     "sb_simbrief_id",
     "sb_error",
 ]
@@ -644,6 +684,7 @@ def _apply_attribute_overrides(request):
                     defaults={"is_active": new_active, "source": "live_rule"},
                 )
 
+    sync_overruled_attributes(flight_session)
     flight_session.pilot_overrides = overrides
     flight_session.save(update_fields=["pilot_overrides"])
     return JsonResponse({"status": "ok"})

@@ -1137,3 +1137,38 @@ class TestDualPilotResolution(TestCase):
         active = _resolve_active_ids(selected_attr_ids=[], ofp_attr_ids=set())
         self.assertNotIn(self.solo.id, active)
         self.assertIn(self.dual.id, active)
+
+
+class TestProfileKeepsPilotTemperatureChoice(TestCase):
+    """An OFP-derived temperature band must not be forced back on."""
+
+    def setUp(self):
+        self.anti_ice = Attribute.objects.create(title="Anti-Ice Normal", order=1)
+        self.zero_to_ten = Attribute.objects.create(title="ZeroToTen", order=2)
+
+    def _start(self, selected):
+        session = self.client.session
+        session["sb_derived_attribs"] = [self.anti_ice.pk]
+        session["sb_origin"] = "EHAM"
+        session.save()
+        return self.client.post(
+            "/",
+            {"action": "start_checklist", "attributes": [a.pk for a in selected]},
+        )
+
+    def test_unchecking_derived_attribute_sticks(self):
+        self._start([self.zero_to_ten])
+        fs = FlightSession.objects.get(session_key=self.client.session["flight_session_key"])
+        active = set(
+            FlightSessionAttribute.objects.filter(
+                flight_session=fs, is_active=True
+            ).values_list("attribute_id", flat=True)
+        )
+        self.assertIn(self.zero_to_ten.pk, active)
+        self.assertNotIn(self.anti_ice.pk, active)
+
+    def test_profile_does_not_recheck_derived_attribute(self):
+        self._start([self.zero_to_ten])
+        response = self.client.get("/")
+        self.assertNotIn(self.anti_ice.pk, response.context["prechecked_ids"])
+        self.assertIn(self.zero_to_ten.pk, response.context["prechecked_ids"])
