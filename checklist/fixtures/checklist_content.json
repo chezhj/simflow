@@ -5,9 +5,9 @@
     "fields": {
       "name": "Boeing 737-800",
       "icao_code": "B738",
-      "content_version": "1.5.4",
-      "release_notes": "- After Landing: both flight directors and the Trim Air Switch (optional) are now switched off\n- Flight Deck Preparation: Seatbelt Signs (optional) comes before Start Flight Leg, because the Zibo only starts the passenger load with the sign on Auto or On\n- Landing Checklist: the speed brakes are checked armed (Green Light) before the landing gear\n- Securing: the Recirc Fan Switches item now ticks itself when both fans are off\n- Securing: Battery off now reads the Zibo battery switch, like Battery on in Flight Deck Preparation",
-      "updated_at": "2026-11-14T12:33:17.245414Z"
+      "content_version": "1.5.5",
+      "release_notes": "- Procedure groups: Before Takeoff, Precruise, Cruise Entry, Descent, Descent 10k and After Landing are now Normal procedures (they still start on a condition), so they sit in the Normal group; Go-around and Waypoint Reached stay Situational\n- The idle page now scrolls the procedure list to, and suggests, the first procedure still open, including those condition-started steps",
+      "updated_at": "2026-11-14T13:56:52.724350Z"
     }
   },
   {
