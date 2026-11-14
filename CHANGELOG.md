@@ -1,3 +1,13 @@
+## v2.11.0 (2026-11-14)
+
+### Feat
+
+- **attributes**: prefer x-plane over simbrief temperature (#64)
+
+### Fix
+
+- **idle**: count rule-triggered flow procedures as next (#62)
+
 ## v2.10.8 (2026-11-14)
 
 ### Fix
