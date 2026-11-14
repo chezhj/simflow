@@ -25,6 +25,7 @@ WING = "laminar/B738/ice/wing_heat_pos"
 
 ANTI_ICE_NORMAL = 7
 ZERO_TO_TEN = 9
+OPTIONAL = 4
 
 PATH_KEYS = {"dataref", "ref", "fmc_line", "crs", "ref_lat", "ref_lon"}
 RULE_FIELDS = ("auto_check_rule", "show_rule", "live_rule", "live_rule_gate")
@@ -143,3 +144,128 @@ class TestAntiIceNormalAntiIce(SimpleTestCase):
         self.assertFalse(evaluate_rule(_item(255)["auto_check_rule"], {WING: 0}))
         self.assertTrue(evaluate_rule(_item(256)["auto_check_rule"], {ENG1: 1, ENG2: 1}))
         self.assertFalse(evaluate_rule(_item(256)["auto_check_rule"], {ENG1: 1, ENG2: 0}))
+
+
+class TestAfterLandingShutdown(SimpleTestCase):
+    """After Landing 394-396: flight directors and trim air go off (issue #56)."""
+
+    AFTER_LANDING = 21
+    WEATHER_RADAR = 344
+    STAB_TRIM = 352
+
+    def _after_landing(self):
+        return sorted(
+            (o["fields"]["step"], o["pk"]) for o in CONTENT
+            if o["model"] == "checklist.checkitem"
+            and o["fields"]["procedure"] == self.AFTER_LANDING
+        )
+
+    def test_flight_directors_come_before_weather_radar(self):
+        steps = dict((pk, step) for step, pk in self._after_landing())
+        self.assertLess(steps[394], steps[395])
+        self.assertLess(steps[395], steps[self.WEATHER_RADAR])
+        self.assertGreater(steps[394], steps[343])
+
+    def test_trim_air_is_last_before_the_power_transfer(self):
+        self.assertEqual(self._after_landing()[-1][1], 396)
+        self.assertGreater(_item(396)["step"], _item(self.STAB_TRIM)["step"])
+
+    def test_flight_directors_show_for_every_profile(self):
+        for pk in (394, 395):
+            self.assertEqual(_item(pk)["attributes"], [])
+
+    def test_trim_air_is_optional(self):
+        # Same Optional attribute (4) as the Preflight Trim Air Switch (35).
+        self.assertEqual(_item(396)["attributes"], [OPTIONAL])
+        self.assertEqual(_item(35)["attributes"], [OPTIONAL])
+
+    def test_each_item_checks_its_switch_is_off(self):
+        expected = {
+            394: ("PF", "laminar/B738/autopilot/flight_director_pos"),
+            395: ("PM", "laminar/B738/autopilot/flight_director_fo_pos"),
+            396: ("PM", "laminar/B738/air/trim_air_pos"),
+        }
+        for pk, (role, dataref) in expected.items():
+            item = _item(pk)
+            self.assertEqual(item["role"], role)
+            self.assertEqual(item["setting"], "Off")
+            self.assertTrue(evaluate_rule(item["auto_check_rule"], {dataref: 0}))
+            self.assertFalse(evaluate_rule(item["auto_check_rule"], {dataref: 1}))
+
+
+class TestSeatbeltBeforeStartFlightLeg(SimpleTestCase):
+    """Flight Deck Preparation 397: the Zibo only starts the leg with the sign on (#57)."""
+
+    SEATBELT_SIGN = "laminar/B738/toggle_switch/seatbelt_sign_pos"
+    START_FLIGHT_LEG = 160
+
+    def test_item_sits_directly_before_start_flight_leg(self):
+        seatbelt, start = _item(397), _item(self.START_FLIGHT_LEG)
+        self.assertEqual(seatbelt["procedure"], start["procedure"])
+        self.assertEqual(seatbelt["step"] + 1, start["step"])
+
+    def test_item_is_optional_like_the_ground_services_it_supports(self):
+        self.assertEqual(_item(397)["attributes"], [OPTIONAL])
+        self.assertEqual(_item(159)["attributes"], [OPTIONAL])
+        self.assertEqual(_item(self.START_FLIGHT_LEG)["attributes"], [OPTIONAL])
+
+    def test_auto_and_on_count_as_done_off_does_not(self):
+        rule = _item(397)["auto_check_rule"]
+        self.assertFalse(evaluate_rule(rule, {self.SEATBELT_SIGN: 0}))
+        self.assertTrue(evaluate_rule(rule, {self.SEATBELT_SIGN: 1}))
+        self.assertTrue(evaluate_rule(rule, {self.SEATBELT_SIGN: 2}))
+
+
+class TestSecuringRules(SimpleTestCase):
+    """Securing 372/382: recirc fans and battery read the Zibo switches (#55)."""
+
+    L_RECIRC = "laminar/B738/air/l_recirc_fan_pos"
+    R_RECIRC = "laminar/B738/air/r_recirc_fan_pos"
+    BATTERY = "laminar/B738/electric/battery_pos"
+
+    def test_recirc_fans_tick_only_when_both_are_off(self):
+        rule = _item(372)["auto_check_rule"]
+        self.assertTrue(evaluate_rule(rule, {self.L_RECIRC: 0, self.R_RECIRC: 0}))
+        self.assertFalse(evaluate_rule(rule, {self.L_RECIRC: 1, self.R_RECIRC: 0}))
+        self.assertFalse(evaluate_rule(rule, {self.L_RECIRC: 0, self.R_RECIRC: 1}))
+
+    def test_recirc_rule_uses_the_datarefs_of_the_preflight_item(self):
+        found, preflight = [], []
+        _paths(_item(372)["auto_check_rule"], found)
+        _paths(_item(39)["auto_check_rule"], preflight)
+        self.assertEqual(sorted(found), sorted(preflight))
+
+    def test_battery_off_uses_the_same_dataref_as_battery_on(self):
+        on, off = _item(145)["auto_check_rule"], _item(382)["auto_check_rule"]
+        self.assertEqual(off["dataref"], on["dataref"])
+        self.assertEqual(off["dataref"], self.BATTERY)
+
+    def test_battery_off_ticks_only_when_switch_is_off(self):
+        rule = _item(382)["auto_check_rule"]
+        self.assertTrue(evaluate_rule(rule, {self.BATTERY: 0}))
+        self.assertFalse(evaluate_rule(rule, {self.BATTERY: 1}))
+
+
+class TestLandingSpeedBrakesArmed(SimpleTestCase):
+    """Landing Checklist 398: the speed brakes are checked armed before landing (#54)."""
+
+    LANDING_CHECKLIST = 20
+    ENGINE_START, LANDING_GEAR, APPROACH_SPEED_BRAKES = 336, 337, 330
+    SPEEDBRAKE = "sim/cockpit2/controls/speedbrake_ratio"
+
+    def test_item_sits_between_engine_start_and_landing_gear(self):
+        item = _item(398)
+        self.assertEqual(item["procedure"], self.LANDING_CHECKLIST)
+        self.assertGreater(item["step"], _item(self.ENGINE_START)["step"])
+        self.assertLess(item["step"], _item(self.LANDING_GEAR)["step"])
+
+    def test_item_mirrors_the_approach_speed_brakes_item(self):
+        item, model = _item(398), _item(self.APPROACH_SPEED_BRAKES)
+        for field in ("item", "setting", "action_label", "role", "attributes",
+                      "dataref_expression", "auto_check_rule"):
+            self.assertEqual(item[field], model[field], field)
+
+    def test_ticks_only_when_armed(self):
+        rule = _item(398)["auto_check_rule"]
+        self.assertTrue(evaluate_rule(rule, {self.SPEEDBRAKE: -0.5}))
+        self.assertFalse(evaluate_rule(rule, {self.SPEEDBRAKE: 0}))

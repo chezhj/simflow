@@ -5,9 +5,9 @@
     "fields": {
       "name": "Boeing 737-800",
       "icao_code": "B738",
-      "content_version": "1.5.3",
-      "release_notes": "- Before Takeoff now opens at the hold-short line: the runway corridor is 120 m either side of the centreline (was 90 m)\n- CDU preflight: the Wind item ticks itself when the winds are loaded (the FMC EXEC light comes on)\n- Before Taxi, 0-10 \u00b0C: engine and wing anti-ice read \"ON with visible moisture\" and continue on their own when there is little moisture\n- Before Taxi, sub-zero: wing and engine anti-ice now show for Anti-Ice Normal alone (they needed two exclusive conditions and never showed)\n- Takeoff: the cold-and-wet CONT option for the engine start switches now works (it read a misspelled dataref)",
-      "updated_at": "2026-11-07T16:34:52.773783Z"
+      "content_version": "1.5.4",
+      "release_notes": "- After Landing: both flight directors and the Trim Air Switch (optional) are now switched off\n- Flight Deck Preparation: Seatbelt Signs (optional) comes before Start Flight Leg, because the Zibo only starts the passenger load with the sign on Auto or On\n- Landing Checklist: the speed brakes are checked armed (Green Light) before the landing gear\n- Securing: the Recirc Fan Switches item now ticks itself when both fans are off\n- Securing: Battery off now reads the Zibo battery switch, like Battery on in Flight Deck Preparation",
+      "updated_at": "2026-11-14T12:33:17.245414Z"
     }
   },
   {
@@ -4346,11 +4346,32 @@
   },
   {
     "model": "checklist.checkitem",
+    "pk": 397,
+    "fields": {
+      "item": "Seatbelt Signs",
+      "procedure": 8,
+      "step": 24,
+      "setting": "Auto or On",
+      "action_label": "SET",
+      "dataref_expression": "(laminar/B738/toggle_switch/seatbelt_sign_pos:>0)",
+      "role": "FO",
+      "auto_check_rule": {
+        "dataref": "laminar/B738/toggle_switch/seatbelt_sign_pos",
+        "op": "gte",
+        "value": 1
+      },
+      "attributes": [
+        4
+      ]
+    }
+  },
+  {
+    "model": "checklist.checkitem",
     "pk": 160,
     "fields": {
       "item": "Start Flight Leg",
       "procedure": 8,
-      "step": 24,
+      "step": 25,
       "setting": "Start",
       "action_label": "DONE",
       "dataref_expression": "laminar/b738/fmodpack/fmod_start_leg:1",
@@ -8245,6 +8266,25 @@
   },
   {
     "model": "checklist.checkitem",
+    "pk": 398,
+    "fields": {
+      "item": "Speed Brakes",
+      "procedure": 20,
+      "step": 15,
+      "setting": "Armed (Green Light)",
+      "action_label": "ARMED",
+      "dataref_expression": "sim/cockpit2/controls/speedbrake_ratio:-0.5",
+      "role": "PM",
+      "auto_check_rule": {
+        "dataref": "sim/cockpit2/controls/speedbrake_ratio",
+        "op": "eq",
+        "value": -0.5
+      },
+      "attributes": []
+    }
+  },
+  {
+    "model": "checklist.checkitem",
     "pk": 337,
     "fields": {
       "item": "Landing Gear",
@@ -8387,6 +8427,44 @@
       "role": "PM",
       "auto_check_rule": {
         "dataref": "sim/cockpit2/controls/flap_handle_request_ratio",
+        "op": "eq",
+        "value": 0
+      },
+      "attributes": []
+    }
+  },
+  {
+    "model": "checklist.checkitem",
+    "pk": 394,
+    "fields": {
+      "item": "FD (Pilot Flying/Captain)",
+      "procedure": 21,
+      "step": 35,
+      "setting": "Off",
+      "action_label": "SET",
+      "dataref_expression": "(laminar/B738/autopilot/flight_director_pos:0)",
+      "role": "PF",
+      "auto_check_rule": {
+        "dataref": "laminar/B738/autopilot/flight_director_pos",
+        "op": "eq",
+        "value": 0
+      },
+      "attributes": []
+    }
+  },
+  {
+    "model": "checklist.checkitem",
+    "pk": 395,
+    "fields": {
+      "item": "FD (Pilot Monitoring/First Officer)",
+      "procedure": 21,
+      "step": 37,
+      "setting": "Off",
+      "action_label": "SET",
+      "dataref_expression": "(laminar/B738/autopilot/flight_director_fo_pos:0)",
+      "role": "PM",
+      "auto_check_rule": {
+        "dataref": "laminar/B738/autopilot/flight_director_fo_pos",
         "op": "eq",
         "value": 0
       },
@@ -8601,6 +8679,27 @@
         "tolerance": 0.5
       },
       "attributes": []
+    }
+  },
+  {
+    "model": "checklist.checkitem",
+    "pk": 396,
+    "fields": {
+      "item": "Trim Air Switch",
+      "procedure": 21,
+      "step": 130,
+      "setting": "Off",
+      "action_label": "SET",
+      "dataref_expression": "(laminar/B738/air/trim_air_pos:0)",
+      "role": "PM",
+      "auto_check_rule": {
+        "dataref": "laminar/B738/air/trim_air_pos",
+        "op": "eq",
+        "value": 0
+      },
+      "attributes": [
+        4
+      ]
     }
   },
   {
@@ -9006,7 +9105,20 @@
       "action_label": "SET",
       "dataref_expression": "",
       "role": "PM",
-      "auto_check_rule": null,
+      "auto_check_rule": {
+        "all": [
+          {
+            "dataref": "laminar/B738/air/l_recirc_fan_pos",
+            "op": "eq",
+            "value": 0
+          },
+          {
+            "dataref": "laminar/B738/air/r_recirc_fan_pos",
+            "op": "eq",
+            "value": 0
+          }
+        ]
+      },
       "attributes": []
     }
   },
@@ -9264,7 +9376,7 @@
       "dataref_expression": "sim/cockpit2/electrical/battery_on[0]:0",
       "role": "PM",
       "auto_check_rule": {
-        "dataref": "sim/cockpit2/electrical/battery_on[0]",
+        "dataref": "laminar/B738/electric/battery_pos",
         "op": "eq",
         "value": 0
       },
