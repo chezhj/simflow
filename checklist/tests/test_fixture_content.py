@@ -214,3 +214,33 @@ class TestSeatbeltBeforeStartFlightLeg(SimpleTestCase):
         self.assertFalse(evaluate_rule(rule, {self.SEATBELT_SIGN: 0}))
         self.assertTrue(evaluate_rule(rule, {self.SEATBELT_SIGN: 1}))
         self.assertTrue(evaluate_rule(rule, {self.SEATBELT_SIGN: 2}))
+
+
+class TestSecuringRules(SimpleTestCase):
+    """Securing 372/382: recirc fans and battery read the Zibo switches (#55)."""
+
+    L_RECIRC = "laminar/B738/air/l_recirc_fan_pos"
+    R_RECIRC = "laminar/B738/air/r_recirc_fan_pos"
+    BATTERY = "laminar/B738/electric/battery_pos"
+
+    def test_recirc_fans_tick_only_when_both_are_off(self):
+        rule = _item(372)["auto_check_rule"]
+        self.assertTrue(evaluate_rule(rule, {self.L_RECIRC: 0, self.R_RECIRC: 0}))
+        self.assertFalse(evaluate_rule(rule, {self.L_RECIRC: 1, self.R_RECIRC: 0}))
+        self.assertFalse(evaluate_rule(rule, {self.L_RECIRC: 0, self.R_RECIRC: 1}))
+
+    def test_recirc_rule_uses_the_datarefs_of_the_preflight_item(self):
+        found, preflight = [], []
+        _paths(_item(372)["auto_check_rule"], found)
+        _paths(_item(39)["auto_check_rule"], preflight)
+        self.assertEqual(sorted(found), sorted(preflight))
+
+    def test_battery_off_uses_the_same_dataref_as_battery_on(self):
+        on, off = _item(145)["auto_check_rule"], _item(382)["auto_check_rule"]
+        self.assertEqual(off["dataref"], on["dataref"])
+        self.assertEqual(off["dataref"], self.BATTERY)
+
+    def test_battery_off_ticks_only_when_switch_is_off(self):
+        rule = _item(382)["auto_check_rule"]
+        self.assertTrue(evaluate_rule(rule, {self.BATTERY: 0}))
+        self.assertFalse(evaluate_rule(rule, {self.BATTERY: 1}))

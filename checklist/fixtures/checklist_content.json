@@ -9086,7 +9086,20 @@
       "action_label": "SET",
       "dataref_expression": "",
       "role": "PM",
-      "auto_check_rule": null,
+      "auto_check_rule": {
+        "all": [
+          {
+            "dataref": "laminar/B738/air/l_recirc_fan_pos",
+            "op": "eq",
+            "value": 0
+          },
+          {
+            "dataref": "laminar/B738/air/r_recirc_fan_pos",
+            "op": "eq",
+            "value": 0
+          }
+        ]
+      },
       "attributes": []
     }
   },
@@ -9344,7 +9357,7 @@
       "dataref_expression": "sim/cockpit2/electrical/battery_on[0]:0",
       "role": "PM",
       "auto_check_rule": {
-        "dataref": "sim/cockpit2/electrical/battery_on[0]",
+        "dataref": "laminar/B738/electric/battery_pos",
         "op": "eq",
         "value": 0
       },
