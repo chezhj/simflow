@@ -692,6 +692,60 @@ def _build_procedure_groups(all_procedures, current_step=None):
     return groups
 
 
+def _visible_items(items, active_attr_ids):
+    """Items the pilot sees for the active attributes, flagged with ``warn_mode``.
+
+    ``warn_mode`` items are hidden by the Informational Items opt-out but can
+    still fail their auto-check rule, so they surface as inline warnings.
+    """
+    shown = []
+    for item in items:
+        if item.shouldshow(active_attr_ids):
+            item.warn_mode = False
+            shown.append(item)
+        elif item.should_warn(active_attr_ids):
+            item.warn_mode = True
+            shown.append(item)
+    return shown
+
+
+def _first_open_procedure(flight_session):
+    """The procedure the pilot should continue with in the linear flow.
+
+    Returns the first NORMAL, non-conditional procedure (by step) that still has
+    a visible item neither checked nor skipped. When everything is complete the
+    last linear procedure is returned, and ``None`` when there are none.
+
+    Unlike ``FlightSession.active_phase`` this ignores detours: opening an
+    out-of-flow (conditional or situational) procedure does not move it.
+    """
+    linear = list(
+        Procedure.objects.filter(
+            show_rule__isnull=True, category=Procedure.NORMAL
+        )
+        .order_by("step")
+        .prefetch_related("checkitem_set__attributes")
+    )
+    if not linear:
+        return None
+
+    active_attr_ids = list(
+        FlightSessionAttribute.objects.filter(
+            flight_session=flight_session, is_active=True
+        ).values_list("attribute_id", flat=True)
+    )
+    done_item_ids = set(
+        FlightItemState.objects.filter(
+            flight_session=flight_session, status__in=["checked", "skipped"]
+        ).values_list("checklist_item_id", flat=True)
+    )
+    for proc in linear:
+        items = _visible_items(proc.checkitem_set.all(), active_attr_ids)
+        if any(item.id not in done_item_ids for item in items):
+            return proc
+    return linear[-1]
+
+
 def procedure_detail(request, slug=None, pk=None):
     """Show all check items for the given procedure slug."""
     if request.method == "POST":
@@ -746,14 +800,7 @@ def procedure_detail(request, slug=None, pk=None):
 
     # Two buckets: normally visible items and warn-mode items (hidden by attr 3 only,
     # but have an auto_check_rule that can fail and needs to gate the pilot).
-    shown_items = []
-    for item in allitems:
-        if item.shouldshow(active_attr_ids):
-            item.warn_mode = False
-            shown_items.append(item)
-        elif item.should_warn(active_attr_ids):
-            item.warn_mode = True
-            shown_items.append(item)
+    shown_items = _visible_items(allitems, active_attr_ids)
 
     # Roles still come from session (migrated to FlightSession in a later step)
     pilot_role = request.session.get("pilot_role", None)
@@ -890,25 +937,21 @@ def idle_view(request):
     all_procedures = list(Procedure.objects.order_by("step"))
     conditional_proc_slugs = [p.slug for p in all_procedures if p.show_rule is not None]
 
-    active_phase_proc = Procedure.objects.filter(
-        slug=flight_session.active_phase
-    ).first()
-    active_phase_step = active_phase_proc.step if active_phase_proc else 0
-    next_linear_proc = (
-        Procedure.objects.filter(step__gt=active_phase_step, show_rule__isnull=True)
-        .order_by("step")
-        .first()
-    )
+    # Derived from checked state, not active_phase: a detour into an out-of-flow
+    # procedure must not move "What's next" or the sidebar position.
+    next_linear_proc = _first_open_procedure(flight_session)
+    next_step = next_linear_proc.step if next_linear_proc else 0
 
     context = {
         "live_values": live_values,
         "all_procedures": all_procedures,
         "procedure_groups": _build_procedure_groups(
-            all_procedures, current_step=active_phase_step
+            all_procedures, current_step=next_step
         ),
         "conditional_proc_slugs_json": json.dumps(conditional_proc_slugs),
         "has_conditional_procs": bool(conditional_proc_slugs),
         "next_linear_proc": next_linear_proc,
+        "scroll_target_slug": next_linear_proc.slug if next_linear_proc else "",
         "flight_session": flight_session,
         "keep_screen_on": _keep_screen_on(flight_session),
         "poll_interval_ms": settings.POLL_INTERVAL_MS,

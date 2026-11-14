@@ -54,6 +54,7 @@
                         {% for proc in group.procedures %}
                             <a class="proc-sidebar-item js-nav-btn"
                                href="{% url 'checklist:detail' proc.slug %}"
+                               {% if proc.slug == scroll_target_slug %}data-scroll-target{% endif %}
                                {% if proc.show_rule %}data-conditional-slug="{{ proc.slug }}"{% endif %}>
                                 <span class="proc-sidebar-name">{{ proc.title }}</span>
                                 <span class="proc-sidebar-badge">{{ proc.step }}</span>
@@ -335,9 +336,21 @@
                 btn.setAttribute('aria-expanded', collapsed ? 'false' : 'true');
             });
         });
-        var target = document.querySelector('.proc-group:not(.is-collapsed) .proc-sidebar-item');
-        if (target && target.scrollIntoView) {
-            target.scrollIntoView({ block: 'center' });
+        /* Centre the first open procedure of the linear flow, so the list stays
+           where the flight is instead of jumping back to the top. */
+        var target = document.querySelector('.proc-sidebar-item[data-scroll-target]')
+                  || document.querySelector('.proc-group:not(.is-collapsed) .proc-sidebar-item');
+        var list = document.querySelector('.proc-sidebar-list');
+        if (target && list) {
+            var group = target.closest('.proc-group');
+            if (group && group.classList.contains('is-collapsed')) {
+                group.classList.remove('is-collapsed');
+                var hdr = group.querySelector('.js-group-toggle');
+                if (hdr) hdr.setAttribute('aria-expanded', 'true');
+            }
+            /* Scroll the list itself, not the page (scrollIntoView can move both). */
+            var offset = target.getBoundingClientRect().top - list.getBoundingClientRect().top;
+            list.scrollTop += offset - (list.clientHeight - target.offsetHeight) / 2;
         }
     })();
 
