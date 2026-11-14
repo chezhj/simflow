@@ -835,6 +835,103 @@ class TestIdleView(ViewTestCase):
         self.assertEqual(sorted(slugs), sorted(expected))
 
 
+class TestIdleFirstOpenProcedure(ViewTestCase):
+    """Idle sidebar scroll target and "What's next" follow the checked state (#58)."""
+
+    def setUp(self):
+        super().setUp()
+        from checklist.models import Procedure
+        from checklist.tests.testFactories import SOPFactory as _SOPFactory
+        Procedure.objects.all().delete()  # isolate from any seeded content
+        self.sop = _SOPFactory()
+        self.Procedure = Procedure
+        self.proc_a = Procedure.objects.create(title="A", step=1, slug="idle-a", sop=self.sop)
+        self.proc_b = Procedure.objects.create(title="B", step=2, slug="idle-b", sop=self.sop)
+        self.proc_c = Procedure.objects.create(title="C", step=3, slug="idle-c", sop=self.sop)
+        self.item_a = CheckItemFactory(procedure=self.proc_a)
+        self.item_b = CheckItemFactory(procedure=self.proc_b)
+        self.item_c = CheckItemFactory(procedure=self.proc_c)
+        self.request = self.create_request_with_session("/idle/")
+        self.flight = _create_session_with_flight(self.request, [])
+
+    def _state(self, item, status="checked"):
+        FlightItemState.objects.create(
+            flight_session=self.flight, checklist_item=item, status=status, source="manual"
+        )
+
+    def _idle(self):
+        return idle_view(self.request).context_data
+
+    def test_first_procedure_when_nothing_checked(self):
+        ctx = self._idle()
+        self.assertEqual(ctx["scroll_target_slug"], "idle-a")
+        self.assertEqual(ctx["next_linear_proc"].slug, "idle-a")
+
+    def test_skips_completed_procedures(self):
+        self._state(self.item_a)
+        self._state(self.item_b, status="skipped")
+        ctx = self._idle()
+        self.assertEqual(ctx["scroll_target_slug"], "idle-c")
+        self.assertEqual(ctx["next_linear_proc"].slug, "idle-c")
+
+    def test_stays_on_partially_completed_procedure(self):
+        second = CheckItemFactory(procedure=self.proc_a)
+        self._state(self.item_a)
+        self.assertEqual(self._idle()["scroll_target_slug"], "idle-a")
+        self._state(second)
+        self.assertEqual(self._idle()["scroll_target_slug"], "idle-b")
+
+    def test_out_of_flow_detour_does_not_move_target(self):
+        """active_phase on a conditional procedure must not displace the target."""
+        cond = self.Procedure.objects.create(
+            title="Cond", step=4, slug="idle-cond", sop=self.sop,
+            show_rule={"dataref": "x", "op": "eq", "value": 1},
+        )
+        CheckItemFactory(procedure=cond)
+        self._state(self.item_a)
+        self.flight.active_phase = cond.slug
+        self.flight.save(update_fields=["active_phase"])
+        ctx = self._idle()
+        self.assertEqual(ctx["scroll_target_slug"], "idle-b")
+        self.assertEqual(ctx["next_linear_proc"].slug, "idle-b")
+
+    def test_non_normal_category_is_ignored(self):
+        emergency = self.Procedure.objects.create(
+            title="Emerg", step=0, slug="idle-emerg", sop=self.sop,
+            category=self.Procedure.EMERGENCY,
+        )
+        CheckItemFactory(procedure=emergency)
+        self.assertEqual(self._idle()["scroll_target_slug"], "idle-a")
+
+    def test_items_hidden_by_attributes_do_not_count(self):
+        attr = AttributeFactory()
+        hidden = CheckItemFactory(procedure=self.proc_a, attributes=[attr])
+        self._state(self.item_a)
+        self.assertEqual(self._idle()["scroll_target_slug"], "idle-b")
+        self.assertIsNotNone(hidden.pk)
+
+    def test_all_done_falls_back_to_last_linear_procedure(self):
+        for item in (self.item_a, self.item_b, self.item_c):
+            self._state(item)
+        self.assertEqual(self._idle()["scroll_target_slug"], "idle-c")
+
+    def test_no_linear_procedures_gives_empty_target(self):
+        self.Procedure.objects.all().delete()
+        ctx = self._idle()
+        self.assertEqual(ctx["scroll_target_slug"], "")
+        self.assertIsNone(ctx["next_linear_proc"])
+
+    def test_rendered_page_marks_scroll_target(self):
+        self._state(self.item_a)
+        response = idle_view(self.request)
+        response.render()
+        html = response.content.decode()
+        import re
+        marked = re.findall(r'<a [^>]*data-scroll-target[^>]*>', html)
+        self.assertEqual(len(marked), 1)
+        self.assertIn('/idle-b', marked[0])
+
+
 class TestNextprocSkipsConditional(ViewTestCase):
 
     def test_nextproc_skips_conditional_procedure(self):
