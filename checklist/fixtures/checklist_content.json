@@ -8266,6 +8266,25 @@
   },
   {
     "model": "checklist.checkitem",
+    "pk": 398,
+    "fields": {
+      "item": "Speed Brakes",
+      "procedure": 20,
+      "step": 15,
+      "setting": "Armed (Green Light)",
+      "action_label": "ARMED",
+      "dataref_expression": "sim/cockpit2/controls/speedbrake_ratio:-0.5",
+      "role": "PM",
+      "auto_check_rule": {
+        "dataref": "sim/cockpit2/controls/speedbrake_ratio",
+        "op": "eq",
+        "value": -0.5
+      },
+      "attributes": []
+    }
+  },
+  {
+    "model": "checklist.checkitem",
     "pk": 337,
     "fields": {
       "item": "Landing Gear",

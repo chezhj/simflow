@@ -244,3 +244,28 @@ class TestSecuringRules(SimpleTestCase):
         rule = _item(382)["auto_check_rule"]
         self.assertTrue(evaluate_rule(rule, {self.BATTERY: 0}))
         self.assertFalse(evaluate_rule(rule, {self.BATTERY: 1}))
+
+
+class TestLandingSpeedBrakesArmed(SimpleTestCase):
+    """Landing Checklist 398: the speed brakes are checked armed before landing (#54)."""
+
+    LANDING_CHECKLIST = 20
+    ENGINE_START, LANDING_GEAR, APPROACH_SPEED_BRAKES = 336, 337, 330
+    SPEEDBRAKE = "sim/cockpit2/controls/speedbrake_ratio"
+
+    def test_item_sits_between_engine_start_and_landing_gear(self):
+        item = _item(398)
+        self.assertEqual(item["procedure"], self.LANDING_CHECKLIST)
+        self.assertGreater(item["step"], _item(self.ENGINE_START)["step"])
+        self.assertLess(item["step"], _item(self.LANDING_GEAR)["step"])
+
+    def test_item_mirrors_the_approach_speed_brakes_item(self):
+        item, model = _item(398), _item(self.APPROACH_SPEED_BRAKES)
+        for field in ("item", "setting", "action_label", "role", "attributes",
+                      "dataref_expression", "auto_check_rule"):
+            self.assertEqual(item[field], model[field], field)
+
+    def test_ticks_only_when_armed(self):
+        rule = _item(398)["auto_check_rule"]
+        self.assertTrue(evaluate_rule(rule, {self.SPEEDBRAKE: -0.5}))
+        self.assertFalse(evaluate_rule(rule, {self.SPEEDBRAKE: 0}))
