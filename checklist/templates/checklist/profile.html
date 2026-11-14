@@ -93,11 +93,6 @@
         <div class="card-header">
           <span class="card-header-title">Conditions</span>
         </div>
-        {% if temp_source == "sim" %}
-        <p class="toggle-desc" id="temp-source-note">Temperature band: from the connected sim ({{ sim_temp|floatformat:0 }}°C). The SimBrief plan temperature is ignored while the sim is connected.</p>
-        {% elif temp_source == "simbrief" %}
-        <p class="toggle-desc" id="temp-source-note">Temperature band: from the SimBrief plan ({{ sb_temp }}). Once the sim connects, its reported temperature takes over.</p>
-        {% endif %}
         <div class="toggle-list">
           {% for attr in conditions_attrs %}
           <div class="toggle-row">

@@ -1201,13 +1201,13 @@ class TestProfileUsesSimTemperatureWhenConnected(TestCase):
         self.assertEqual(response.context["temp_source"], "sim")
         self.assertIn(self.zero_to_ten.pk, response.context["prechecked_ids"])
         self.assertNotIn(self.anti_ice.pk, response.context["prechecked_ids"])
-        self.assertContains(response, "connected sim")
+        self.assertContains(response, "(sim)")
 
     def test_simbrief_used_when_sim_not_connected(self):
         FlightSession.objects.filter(pk=self.fs.pk).update(last_plugin_contact=None)
         response = self.client.get("/")
         self.assertEqual(response.context["temp_source"], "simbrief")
-        self.assertContains(response, "SimBrief plan")
+        self.assertNotContains(response, "(sim)")
 
     def test_manual_choice_is_kept_while_connected(self):
         self.client.post(
