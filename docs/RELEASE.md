@@ -1,12 +1,12 @@
 # Release Howto
 
-Three independent release processes share one mono-repo. Each has its own version and git tag namespace.
+Three independent release processes share one mono-repo. The web app and the plugin have their own git tag namespace; checklist content is versioned in the fixture and is not tagged (the `sop-{icao}-v*` tags up to `sop-B738-v1.4.1` are historical).
 
 | Artefact | Tag format | Tool |
 |---|---|---|
 | Web app | `v*` | Release workflow (GitHub Actions) |
 | X-Plane plugin | `plugin-v*` | `scripts/bump_plugin.py` |
-| Checklist content (SOP) | `sop-{icao}-v*` | `scripts/bump_content_version.py` |
+| Checklist content (SOP) | none: the version is `content_version` in the fixture | `scripts/bump_content_version.py` |
 
 ---
 
@@ -147,18 +147,20 @@ python scripts/bump_content_version.py B738 <new-version>
 ```
 
 The script:
-- Drafts release notes from `git log` — commits touching `checklist/migrations/` or `checklist/fixtures/` since the previous `sop-B738-v*` tag.
+- Drafts release notes from `git log` — commits touching `checklist/migrations/` or `checklist/fixtures/` since the commit that set the current `content_version` (the previous bump, found the same way `scripts/check_content_bump.py` does).
 - Opens the draft in `$EDITOR` (if `$EDITOR` is not set, it prints the temp file path and waits for you to edit it manually).
 - Strips comment lines (lines starting with `#`) from what you save.
 - Writes `content_version`, `release_notes` and `updated_at` into the `checklist.sop` record in the fixture.
 - Runs `checklist_content import` so the dev DB matches the fixture.
 - Stages and commits the fixture as `chore(sop): bump B738 content to X.Y.Z`.
-- Tags `sop-B738-vX.Y.Z`.
+- Creates no git tag.
 
 **3. Push**
 
+Push the branch and open a PR, as for any other change. Nothing else needs pushing: there is no content tag.
+
 ```
-git push && git push origin sop-B738-v<new-version>
+git push
 ```
 
 **4. Deploy to production** — run the Release workflow. See §1.

@@ -111,7 +111,7 @@ Why no required-status-checks rule: the Release workflow pushes its bump commit 
 - A local `cz bump` still works (it bumps, commits and tags, and runs the content-version check) but pushes nothing; `post_bump_hooks` is only an echo. To ship such a bump by hand: `git push && git push --tags`; the pushed `v*` tag deploys.
 - Take a database dump *before* a release that contains migrations: the automatic rollback restores code, not the database.
 - Do not hand-write changelog text under a version header: the workflow generates it. Fix-ups go through a `docs(changelog): ...` PR.
-- Plugin (`plugin-v*`) and SOP (`sop-*`) releases are separate and unchanged, see `docs/RELEASE.md`.
+- Plugin (`plugin-v*`) releases are separate, see `docs/RELEASE.md`. Checklist content is versioned by `content_version` in the fixture (`scripts/bump_content_version.py`) and is not tagged; the old `sop-*` tags are historical.
 - Never push to `master` directly for a web-app change; work on a branch and open a PR.
 
 ---
