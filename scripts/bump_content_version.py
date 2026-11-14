@@ -13,17 +13,20 @@ the dev database so the two agree.
 What it does:
   1. Finds the SOP with the given ICAO code in the fixture.
   2. Drafts release notes from git log (commits touching migrations/ and fixtures/)
-     since the previous sop-{icao}-v* tag.
+     since the commit that set the current content_version (the previous bump).
   3. Opens the draft in $EDITOR (falls back to printing it) for you to edit.
   4. Writes content_version and release_notes into the fixture.
   5. Loads the fixture into the dev DB (manage.py checklist_content import).
   6. Commits the fixture: "chore(sop): bump B738 content to X.Y.Z"
-  7. Creates a git tag: sop-B738-vX.Y.Z
+
+No git tag is created: the version lives in the fixture's content_version and
+release_notes, and the web-app release tag (v*) marks what shipped.
 
 Run from the repo root with the Django dev settings active.
 """
 
 import datetime
+import importlib.util
 import json
 import os
 import subprocess
@@ -47,21 +50,40 @@ def _run(cmd: list[str], capture: bool = False) -> subprocess.CompletedProcess:
     )
 
 
-def _draft_notes(icao: str, new_ver: str) -> str:
+def _load_check_module():
+    """scripts/check_content_bump.py, loaded by path: scripts/ is not a package."""
+    spec = importlib.util.spec_from_file_location(
+        "check_content_bump", REPO_ROOT / "scripts" / "check_content_bump.py"
+    )
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+def _previous_bump(root: Path = REPO_ROOT) -> str | None:
+    """
+    The commit that set the fixture's current content_version, i.e. the previous
+    bump, or None when it cannot be told (no history for the fixture).
+
+    Same lookup the pre-bump content check uses, so the notes draft and the
+    release gate agree on where the last release of the content was.
+    """
+    check = _load_check_module()
+    try:
+        current = check.versions(check.fixture_at("HEAD", root=root))
+        return check.setter_commit(current, root=root)
+    except check.Undetermined:
+        return None
+
+
+def _draft_notes(icao: str, new_ver: str, root: Path = REPO_ROOT) -> str:
     """
     Build a draft of release notes from git log entries that touched
-    checklist/migrations/ or checklist/fixtures/ since the last sop-{icao}-v* tag.
+    checklist/migrations/ or checklist/fixtures/ since the previous bump.
     """
-    tag_prefix = f"sop-{icao}-v"
-    # Find the most recent matching tag
-    result = subprocess.run(
-        ["git", "tag", "--list", f"{tag_prefix}*", "--sort=-version:refname"],
-        capture_output=True, text=True, cwd=REPO_ROOT,
-    )
-    tags = result.stdout.strip().splitlines()
-    prev_tag = tags[0] if tags else None
+    prev = _previous_bump(root)
 
-    range_spec = f"{prev_tag}..HEAD" if prev_tag else "HEAD"
+    range_spec = f"{prev}..HEAD" if prev else "HEAD"
     log_result = subprocess.run(
         [
             "git", "log", range_spec,
@@ -70,11 +92,11 @@ def _draft_notes(icao: str, new_ver: str) -> str:
             "checklist/migrations/",
             "checklist/fixtures/",
         ],
-        capture_output=True, text=True, cwd=REPO_ROOT,
+        capture_output=True, text=True, cwd=root,
     )
     log_lines = log_result.stdout.strip()
 
-    since_note = f"since {prev_tag}" if prev_tag else "all history"
+    since_note = f"since {prev[:7]}" if prev else "all history"
     draft = (
         f"# Release notes for {icao} SOP v{new_ver}\n"
         f"# Edit this file, save and close to continue.\n"
@@ -191,11 +213,7 @@ def main() -> None:
     _run(["git", "add", str(FIXTURE)])
     _run(["git", "commit", "-m", f"chore(sop): bump {icao} content to {new_ver}"])
 
-    tag = f"sop-{icao}-v{new_ver}"
-    print(f"Tagging {tag} …")
-    _run(["git", "tag", tag])
-
-    print(f"\nDone. Push with:\n  git push && git push origin {tag}")
+    print("\nDone. Push the branch and open a PR; the Release workflow ships it.")
 
 
 if __name__ == "__main__":
