@@ -25,6 +25,7 @@ WING = "laminar/B738/ice/wing_heat_pos"
 
 ANTI_ICE_NORMAL = 7
 ZERO_TO_TEN = 9
+OPTIONAL = 4
 
 PATH_KEYS = {"dataref", "ref", "fmc_line", "crs", "ref_lat", "ref_lon"}
 RULE_FIELDS = ("auto_check_rule", "show_rule", "live_rule", "live_rule_gate")
@@ -169,9 +170,14 @@ class TestAfterLandingShutdown(SimpleTestCase):
         self.assertEqual(self._after_landing()[-1][1], 396)
         self.assertGreater(_item(396)["step"], _item(self.STAB_TRIM)["step"])
 
-    def test_items_show_for_every_profile(self):
-        for pk in (394, 395, 396):
+    def test_flight_directors_show_for_every_profile(self):
+        for pk in (394, 395):
             self.assertEqual(_item(pk)["attributes"], [])
+
+    def test_trim_air_is_optional(self):
+        # Same Optional attribute (4) as the Preflight Trim Air Switch (35).
+        self.assertEqual(_item(396)["attributes"], [OPTIONAL])
+        self.assertEqual(_item(35)["attributes"], [OPTIONAL])
 
     def test_each_item_checks_its_switch_is_off(self):
         expected = {

@@ -8657,7 +8657,9 @@
         "op": "eq",
         "value": 0
       },
-      "attributes": []
+      "attributes": [
+        4
+      ]
     }
   },
   {
