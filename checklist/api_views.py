@@ -543,4 +543,9 @@ def attribute_transition_view(request):
                     "suggested_active": rule_fires,
                 })
 
+    if applied:
+        from .views import sync_overruled_attributes
+
+        sync_overruled_attributes(session)
+
     return JsonResponse({"applied": applied, "prompts": prompts})

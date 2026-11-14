@@ -1182,3 +1182,84 @@ class TestDualPilotResolution(TestCase):
         active = _resolve_active_ids(selected_attr_ids=[], ofp_attr_ids=set())
         self.assertNotIn(self.solo.id, active)
         self.assertIn(self.dual.id, active)
+
+
+class TestProfileKeepsPilotTemperatureChoice(TestCase):
+    """An OFP-derived temperature band must not be forced back on."""
+
+    def setUp(self):
+        self.anti_ice = Attribute.objects.create(title="Anti-Ice Normal", order=1)
+        self.zero_to_ten = Attribute.objects.create(title="ZeroToTen", order=2)
+
+    def _start(self, selected):
+        session = self.client.session
+        session["sb_derived_attribs"] = [self.anti_ice.pk]
+        session["sb_origin"] = "EHAM"
+        session.save()
+        return self.client.post(
+            "/",
+            {"action": "start_checklist", "attributes": [a.pk for a in selected]},
+        )
+
+    def test_unchecking_derived_attribute_sticks(self):
+        self._start([self.zero_to_ten])
+        fs = FlightSession.objects.get(session_key=self.client.session["flight_session_key"])
+        active = set(
+            FlightSessionAttribute.objects.filter(
+                flight_session=fs, is_active=True
+            ).values_list("attribute_id", flat=True)
+        )
+        self.assertIn(self.zero_to_ten.pk, active)
+        self.assertNotIn(self.anti_ice.pk, active)
+
+    def test_profile_does_not_recheck_derived_attribute(self):
+        self._start([self.zero_to_ten])
+        response = self.client.get("/")
+        self.assertNotIn(self.anti_ice.pk, response.context["prechecked_ids"])
+        self.assertIn(self.zero_to_ten.pk, response.context["prechecked_ids"])
+
+
+class TestProfileUsesSimTemperatureWhenConnected(TestCase):
+    """SimBrief temperature only applies while no sim is connected."""
+
+    def setUp(self):
+        from datetime import datetime, timezone
+
+        self.anti_ice = Attribute.objects.create(title="Anti-Ice Normal", order=1)
+        self.zero_to_ten = Attribute.objects.create(title="ZeroToTen", order=2)
+        self.fs = FlightSession.objects.create(
+            last_plugin_contact=datetime.now(tz=timezone.utc),
+            last_datarefs={"sim/weather/temperature_sealevel_c": 5},
+        )
+        session = self.client.session
+        session["flight_session_key"] = self.fs.session_key
+        session["sb_origin"] = "EHAM"
+        session["sb_temp"] = "-4°C"  # plan says cold, sim says 5 °C
+        session["sb_derived_attribs"] = [self.anti_ice.pk]
+        session.save()
+        FlightSessionAttribute.objects.create(
+            flight_session=self.fs, attribute=self.anti_ice, is_active=True
+        )
+
+    def test_sim_temperature_wins_on_profile(self):
+        response = self.client.get("/")
+        self.assertEqual(response.context["temp_source"], "sim")
+        self.assertIn(self.zero_to_ten.pk, response.context["prechecked_ids"])
+        self.assertNotIn(self.anti_ice.pk, response.context["prechecked_ids"])
+        self.assertContains(response, "(sim)")
+
+    def test_simbrief_used_when_sim_not_connected(self):
+        FlightSession.objects.filter(pk=self.fs.pk).update(last_plugin_contact=None)
+        response = self.client.get("/")
+        self.assertEqual(response.context["temp_source"], "simbrief")
+        self.assertNotContains(response, "(sim)")
+
+    def test_manual_choice_is_kept_while_connected(self):
+        self.client.post(
+            "/",
+            {"action": "start_checklist", "attributes": [self.anti_ice.pk]},
+        )
+        self.fs.refresh_from_db()
+        self.assertEqual(self.fs.pilot_overrides[str(self.anti_ice.pk)], True)
+        response = self.client.get("/")
+        self.assertIn(self.anti_ice.pk, response.context["prechecked_ids"])

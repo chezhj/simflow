@@ -173,3 +173,36 @@ class TestDecisions(TransitionTestBase):
                 flight_session=self.session, attribute=self.attr
             ).exists()
         )
+
+
+class TestOverruledDependants(TransitionTestBase):
+    """Accepting a prompt must re-derive the hidden attributes it overrules."""
+
+    def setUp(self):
+        super().setUp()
+        self.above_zero = AttributeFactory(
+            title="AboveZero", show=False, over_ruled_by=self.attr
+        )
+        self.set_active(True)  # Anti-Ice Normal on (e.g. from a cold OFP)
+        FlightSessionAttribute.objects.create(
+            flight_session=self.session, attribute=self.above_zero, is_active=False
+        )
+        self.set_datarefs({TEMP: 5, AGL: 0})
+        self.url = reverse("checklist:detail", args=[ProcedureFactory(slug="pre").slug])
+
+    def test_turning_overruler_off_turns_the_dependant_on(self):
+        self.client.post(
+            self.url,
+            data=json.dumps({"decisions": [{"attr_id": self.attr.pk, "accepted": True}]}),
+            content_type="application/json",
+        )
+        self.assertFalse(
+            FlightSessionAttribute.objects.get(
+                flight_session=self.session, attribute=self.attr
+            ).is_active
+        )
+        self.assertTrue(
+            FlightSessionAttribute.objects.get(
+                flight_session=self.session, attribute=self.above_zero
+            ).is_active
+        )

@@ -58,7 +58,7 @@
         </div>
         <div class="ofp-cell">
           <div class="ofp-cell-label">Temp</div>
-          <div class="ofp-cell-value">{{ sb_temp|default:"—" }}</div>
+          <div class="ofp-cell-value">{% if temp_source == "sim" %}{{ sim_temp|floatformat:0 }}°C <span class="toggle-desc">(sim)</span>{% else %}{{ sb_temp|default:"—" }}{% endif %}</div>
         </div>
         <div class="ofp-cell">
           <div class="ofp-cell-label">Flaps</div>
