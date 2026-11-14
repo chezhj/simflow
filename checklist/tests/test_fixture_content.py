@@ -191,3 +191,26 @@ class TestAfterLandingShutdown(SimpleTestCase):
             self.assertEqual(item["setting"], "Off")
             self.assertTrue(evaluate_rule(item["auto_check_rule"], {dataref: 0}))
             self.assertFalse(evaluate_rule(item["auto_check_rule"], {dataref: 1}))
+
+
+class TestSeatbeltBeforeStartFlightLeg(SimpleTestCase):
+    """Flight Deck Preparation 397: the Zibo only starts the leg with the sign on (#57)."""
+
+    SEATBELT_SIGN = "laminar/B738/toggle_switch/seatbelt_sign_pos"
+    START_FLIGHT_LEG = 160
+
+    def test_item_sits_directly_before_start_flight_leg(self):
+        seatbelt, start = _item(397), _item(self.START_FLIGHT_LEG)
+        self.assertEqual(seatbelt["procedure"], start["procedure"])
+        self.assertEqual(seatbelt["step"] + 1, start["step"])
+
+    def test_item_is_optional_like_the_ground_services_it_supports(self):
+        self.assertEqual(_item(397)["attributes"], [OPTIONAL])
+        self.assertEqual(_item(159)["attributes"], [OPTIONAL])
+        self.assertEqual(_item(self.START_FLIGHT_LEG)["attributes"], [OPTIONAL])
+
+    def test_auto_and_on_count_as_done_off_does_not(self):
+        rule = _item(397)["auto_check_rule"]
+        self.assertFalse(evaluate_rule(rule, {self.SEATBELT_SIGN: 0}))
+        self.assertTrue(evaluate_rule(rule, {self.SEATBELT_SIGN: 1}))
+        self.assertTrue(evaluate_rule(rule, {self.SEATBELT_SIGN: 2}))

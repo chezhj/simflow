@@ -4346,11 +4346,32 @@
   },
   {
     "model": "checklist.checkitem",
+    "pk": 397,
+    "fields": {
+      "item": "Seatbelt Signs",
+      "procedure": 8,
+      "step": 24,
+      "setting": "Auto or On",
+      "action_label": "SET",
+      "dataref_expression": "(laminar/B738/toggle_switch/seatbelt_sign_pos:>0)",
+      "role": "FO",
+      "auto_check_rule": {
+        "dataref": "laminar/B738/toggle_switch/seatbelt_sign_pos",
+        "op": "gte",
+        "value": 1
+      },
+      "attributes": [
+        4
+      ]
+    }
+  },
+  {
+    "model": "checklist.checkitem",
     "pk": 160,
     "fields": {
       "item": "Start Flight Leg",
       "procedure": 8,
-      "step": 24,
+      "step": 25,
       "setting": "Start",
       "action_label": "DONE",
       "dataref_expression": "laminar/b738/fmodpack/fmod_start_leg:1",
