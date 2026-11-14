@@ -143,3 +143,45 @@ class TestAntiIceNormalAntiIce(SimpleTestCase):
         self.assertFalse(evaluate_rule(_item(255)["auto_check_rule"], {WING: 0}))
         self.assertTrue(evaluate_rule(_item(256)["auto_check_rule"], {ENG1: 1, ENG2: 1}))
         self.assertFalse(evaluate_rule(_item(256)["auto_check_rule"], {ENG1: 1, ENG2: 0}))
+
+
+class TestAfterLandingShutdown(SimpleTestCase):
+    """After Landing 394-396: flight directors and trim air go off (issue #56)."""
+
+    AFTER_LANDING = 21
+    WEATHER_RADAR = 344
+    STAB_TRIM = 352
+
+    def _after_landing(self):
+        return sorted(
+            (o["fields"]["step"], o["pk"]) for o in CONTENT
+            if o["model"] == "checklist.checkitem"
+            and o["fields"]["procedure"] == self.AFTER_LANDING
+        )
+
+    def test_flight_directors_come_before_weather_radar(self):
+        steps = dict((pk, step) for step, pk in self._after_landing())
+        self.assertLess(steps[394], steps[395])
+        self.assertLess(steps[395], steps[self.WEATHER_RADAR])
+        self.assertGreater(steps[394], steps[343])
+
+    def test_trim_air_is_last_before_the_power_transfer(self):
+        self.assertEqual(self._after_landing()[-1][1], 396)
+        self.assertGreater(_item(396)["step"], _item(self.STAB_TRIM)["step"])
+
+    def test_items_show_for_every_profile(self):
+        for pk in (394, 395, 396):
+            self.assertEqual(_item(pk)["attributes"], [])
+
+    def test_each_item_checks_its_switch_is_off(self):
+        expected = {
+            394: ("PF", "laminar/B738/autopilot/flight_director_pos"),
+            395: ("PM", "laminar/B738/autopilot/flight_director_fo_pos"),
+            396: ("PM", "laminar/B738/air/trim_air_pos"),
+        }
+        for pk, (role, dataref) in expected.items():
+            item = _item(pk)
+            self.assertEqual(item["role"], role)
+            self.assertEqual(item["setting"], "Off")
+            self.assertTrue(evaluate_rule(item["auto_check_rule"], {dataref: 0}))
+            self.assertFalse(evaluate_rule(item["auto_check_rule"], {dataref: 1}))

@@ -8395,6 +8395,44 @@
   },
   {
     "model": "checklist.checkitem",
+    "pk": 394,
+    "fields": {
+      "item": "FD (Pilot Flying/Captain)",
+      "procedure": 21,
+      "step": 35,
+      "setting": "Off",
+      "action_label": "SET",
+      "dataref_expression": "(laminar/B738/autopilot/flight_director_pos:0)",
+      "role": "PF",
+      "auto_check_rule": {
+        "dataref": "laminar/B738/autopilot/flight_director_pos",
+        "op": "eq",
+        "value": 0
+      },
+      "attributes": []
+    }
+  },
+  {
+    "model": "checklist.checkitem",
+    "pk": 395,
+    "fields": {
+      "item": "FD (Pilot Monitoring/First Officer)",
+      "procedure": 21,
+      "step": 37,
+      "setting": "Off",
+      "action_label": "SET",
+      "dataref_expression": "(laminar/B738/autopilot/flight_director_fo_pos:0)",
+      "role": "PM",
+      "auto_check_rule": {
+        "dataref": "laminar/B738/autopilot/flight_director_fo_pos",
+        "op": "eq",
+        "value": 0
+      },
+      "attributes": []
+    }
+  },
+  {
+    "model": "checklist.checkitem",
     "pk": 344,
     "fields": {
       "item": "Weather Radar",
@@ -8599,6 +8637,25 @@
         "op": "abs_diff_lte",
         "value": 5,
         "tolerance": 0.5
+      },
+      "attributes": []
+    }
+  },
+  {
+    "model": "checklist.checkitem",
+    "pk": 396,
+    "fields": {
+      "item": "Trim Air Switch",
+      "procedure": 21,
+      "step": 130,
+      "setting": "Off",
+      "action_label": "SET",
+      "dataref_expression": "(laminar/B738/air/trim_air_pos:0)",
+      "role": "PM",
+      "auto_check_rule": {
+        "dataref": "laminar/B738/air/trim_air_pos",
+        "op": "eq",
+        "value": 0
       },
       "attributes": []
     }
