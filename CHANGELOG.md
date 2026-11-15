@@ -1,3 +1,9 @@
+## v2.11.2 (2026-11-15)
+
+### Fix
+
+- **idle**: ignore optional items when picking the next procedure (#67)
+
 ## v2.11.1 (2026-11-15)
 
 ### Refactor
