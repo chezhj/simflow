@@ -1,3 +1,9 @@
+## v2.11.1 (2026-11-15)
+
+### Refactor
+
+- **content**: rename online attribute to with atc (#66)
+
 ## v2.11.0 (2026-11-14)
 
 ### Feat
