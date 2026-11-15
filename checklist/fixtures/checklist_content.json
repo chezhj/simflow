@@ -5,8 +5,8 @@
     "fields": {
       "name": "Boeing 737-800",
       "icao_code": "B738",
-      "content_version": "1.5.5",
-      "release_notes": "- Procedure groups: Before Takeoff, Precruise, Cruise Entry, Descent, Descent 10k and After Landing are now Normal procedures (they still start on a condition), so they sit in the Normal group; Go-around and Waypoint Reached stay Situational\n- The idle page now scrolls the procedure list to, and suggests, the first procedure still open, including those condition-started steps",
+      "content_version": "1.5.6",
+      "release_notes": "- The Online attribute is now called With ATC (internal name ATC, inverse NoATC), and the Online Setup procedure is now Connect to ATC",
       "updated_at": "2026-11-14T13:56:52.724350Z"
     }
   },
@@ -148,7 +148,7 @@
     "model": "checklist.procedure",
     "pk": 9,
     "fields": {
-      "title": "Online Setup",
+      "title": "Connect to ATC",
       "step": 5,
       "slug": "online-setup",
       "show_expression": "",
@@ -320,10 +320,10 @@
     "model": "checklist.attribute",
     "pk": 2,
     "fields": {
-      "title": "Online",
-      "label": "Online (ATC)",
+      "title": "ATC",
+      "label": "With ATC",
       "order": 2,
-      "description": "Items needed only when flying on a network (VATSIM, IVAO)",
+      "description": "Items needed only when flying with ATC (e.g. on VATSIM or IVAO)",
       "show": true,
       "is_user_preference": false,
       "over_ruled_by": null,
@@ -649,10 +649,10 @@
     "model": "checklist.attribute",
     "pk": 17,
     "fields": {
-      "title": "NotOnline",
+      "title": "NoATC",
       "label": "",
       "order": 999,
-      "description": "Active when NOT flying online (no ATC network). Items tagged with this attribute are hidden when Online is selected.",
+      "description": "Active when NOT flying with ATC. Items tagged with this attribute are hidden when ATC is selected.",
       "show": false,
       "is_user_preference": false,
       "over_ruled_by": 2,
@@ -4405,7 +4405,7 @@
     "model": "checklist.checkitem",
     "pk": 161,
     "fields": {
-      "item": "Online network",
+      "item": "ATC network",
       "procedure": 9,
       "step": 1,
       "setting": "Connect",

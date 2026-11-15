@@ -174,7 +174,7 @@ class TestProfileView(ViewTestCase):
         self.assertTrue(session.is_active)
 
     def test_start_checklist_sets_attributes(self):
-        attr = Attribute.objects.create(title="Online", order=2)
+        attr = Attribute.objects.create(title="ATC", order=2)
         request = self.create_request_with_session(
             "/",
             request_data={"action": "start_checklist", "attributes": str(attr.id)},

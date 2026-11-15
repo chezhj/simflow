@@ -67,7 +67,7 @@ Setup page splits visible attributes into two columns:
 - **Conditions** (left): `show=True, is_user_preference=False` — flight-specific
 - **General** (right): `show=True, is_user_preference=True` — preference defaults
 
-`Online` attribute changed to `is_user_preference=True` so it appears in General.
+`ATC` attribute changed to `is_user_preference=True` so it appears in General.
 
 ### Overrule Logic
 
