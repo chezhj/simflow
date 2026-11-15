@@ -955,6 +955,35 @@ class TestIdleFirstOpenProcedure(ViewTestCase):
         self.assertEqual(self._idle()["scroll_target_slug"], "idle-b")
         self.assertIsNotNone(hidden.pk)
 
+    def _optional_item(self, procedure):
+        from checklist.phase import OPTIONAL_ATTR
+        attr = Attribute.objects.filter(pk=OPTIONAL_ATTR).first() or AttributeFactory(
+            pk=OPTIONAL_ATTR
+        )
+        FlightSessionAttribute.objects.get_or_create(
+            flight_session=self.flight, attribute=attr, defaults={"is_active": True}
+        )
+        return CheckItemFactory(procedure=procedure, attributes=[attr])
+
+    def test_unchecked_optional_items_do_not_pull_pointer_back(self):
+        """Descent done, but optional rows in an earlier procedure stay unchecked.
+
+        Optional items never gate the sequence (phase.gate_item), so they must
+        not make an earlier procedure look like the first one still open.
+        """
+        self._optional_item(self.proc_a)
+        self._state(self.item_a)
+        self._state(self.item_b)
+        self.assertEqual(self._idle()["scroll_target_slug"], "idle-c")
+
+    def test_unchecked_optional_items_count_when_all_visible_required(self):
+        self._optional_item(self.proc_a)
+        self.flight.require_all_visible = True
+        self.flight.save(update_fields=["require_all_visible"])
+        self._state(self.item_a)
+        self._state(self.item_b)
+        self.assertEqual(self._idle()["scroll_target_slug"], "idle-a")
+
     def test_all_done_falls_back_to_last_linear_procedure(self):
         for item in (self.item_a, self.item_b, self.item_c):
             self._state(item)

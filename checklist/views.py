@@ -28,6 +28,7 @@ from .models import (
     UserAttributeDefault,
     UserProfile,
 )
+from .phase import is_optional
 from .rules import evaluate_rule
 
 
@@ -878,6 +879,10 @@ def _first_open_procedure(flight_session):
         if proc.show_rule is not None and proc.step < progress_step:
             continue
         items = _visible_items(proc.checkitem_set.all(), active_attr_ids)
+        # Same rule as the sequence gate (phase.gate_item): Optional rows never
+        # hold a procedure open unless the session requires every visible row.
+        if not flight_session.require_all_visible:
+            items = [item for item in items if not is_optional(item)]
         if any(item.id not in done_item_ids for item in items):
             return proc
     return flow[-1]
