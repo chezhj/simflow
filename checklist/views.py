@@ -42,7 +42,7 @@ _OFP_TEMP_RULES = [
 _OFP_BLEED_OFF_TITLE = "Short Runway"
 
 # Attributes that must never be set automatically from OFP data — always pilot-chosen.
-_OFP_NEVER_DERIVE = {"VA", "Online"}
+_OFP_NEVER_DERIVE = {"VA", "ATC"}
 
 
 # Sim connection / temperature source. A plugin that has posted within this many

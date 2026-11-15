@@ -63,7 +63,7 @@ Bleed:
 | --- | --- |
 | `bleed_setting == "OFF"` | `Short Runway` |
 
-**Never auto-derived:** `{"VA", "Online"}` — these are always pilot-chosen.
+**Never auto-derived:** `{"VA", "ATC"}` — these are always pilot-chosen.
 
 Source: `views.py — _derive_ofp_attrib_ids()`, `_OFP_TEMP_RULES`, `_OFP_BLEED_OFF_TITLE`
 
@@ -404,7 +404,7 @@ Attributes displayed on the profile/setup form are split into two groups by `is_
 | Group | Filter | Purpose |
 | --- | --- | --- |
 | Conditions | `show=True, is_user_preference=False` | Flight-specific (temp, bleed, runway) |
-| General | `show=True, is_user_preference=True` | Persistent user preferences (VA, Online, etc.) |
+| General | `show=True, is_user_preference=True` | Persistent user preferences (VA, ATC, etc.) |
 
 Only `is_user_preference=True` attributes can be saved as user defaults in `UserAttributeDefault`.
 
