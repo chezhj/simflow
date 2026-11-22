@@ -319,6 +319,31 @@ def test_go_around_from_the_flare_returns_to_approach():
     assert state.go_arounds == 1
 
 
+def test_a_go_around_from_the_flare_is_not_counted_again_while_thrust_stays_up():
+    """
+    A go-around from Landing changes the phase to Approach. The latch must be set
+    there too, or the same thrust-up, climbing condition fires again 3 s later.
+    """
+    flare = (4, dict(radio_alt_ft=30, agl_ft=100))
+    climbing = dict(thrust_min=0.95, vs_fpm=1500, radio_alt_ft=80, agl_ft=150)
+    state, changes, _ = run(ON_APPROACH + [flare, (30, climbing)])
+    assert state.phase is Phase.APPROACH
+    assert state.go_arounds == 1
+    assert [c.go_around for c in changes].count(True) == 1
+
+
+def test_a_go_around_from_the_flare_rearms_once_thrust_comes_back():
+    flare = (4, dict(radio_alt_ft=30, agl_ft=100))
+    state, _, _ = run(
+        ON_APPROACH
+        + [flare,
+           (10, dict(thrust_min=0.95, vs_fpm=1500, radio_alt_ft=80, agl_ft=150)),
+           (10, dict(thrust_min=0.4, vs_fpm=-700, radio_alt_ft=400, agl_ft=450)),
+           (10, dict(thrust_min=0.95, vs_fpm=1500, radio_alt_ft=500, agl_ft=550))]
+    )
+    assert state.go_arounds == 2
+
+
 def test_one_lever_up_is_not_a_go_around():
     state, _, _ = run(ON_APPROACH + [(20, dict(thrust_min=0.2, vs_fpm=1500))])
     assert state.go_arounds == 0

@@ -580,7 +580,11 @@ def step(
         since=now,
         last_tick=now,
         pending={},
-        latched=(fired.name,) if fired.dst == state.phase else (),
+        # A go-around must see its condition drop before it can count again. That
+        # holds when it fires from Landing too: the phase changes to Approach, where
+        # the same rule is a candidate again, so latch on go_around, not only on a
+        # self-transition.
+        latched=(fired.name,) if (fired.dst == state.phase or fired.go_around) else (),
         go_arounds=state.go_arounds + (1 if fired.go_around else 0),
         # A go-around restarts the same phase: what came before it is unchanged.
         previous=state.previous if fired.dst == state.phase else state.phase,
