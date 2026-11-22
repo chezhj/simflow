@@ -1,7 +1,7 @@
 # ADR-004: Flight Phase Detection
 
 **Date**: 2026-11-22
-**Status**: Accepted (steps 1 and 2 of 4 built)
+**Status**: Accepted (steps 1 to 3 of 4 built)
 **Deciders**: h (project owner)
 
 ## Context
@@ -46,6 +46,8 @@ block). First purely informational, later possibly to drive procedure logic.
 8. **Informational means failure-isolated.** An exception in the machine or the
    log write is logged and swallowed; it must not cost the pilot the auto-checks
    the same request performs.
+
+9. **Two indicators, one script.** The phase shows in the connection bar on the pages that poll (`detail.html`, `idle.html`) and as a card on the in-flight hub. Under 900px it is a row flush below the bar; from 900px a pill inside it. Two elements rather than one that wraps, because adding `flex-wrap` to `.conn-bar` could push its existing items onto a second line at 320 to 360px, where they currently shrink. `flight-phase.js` fills both. The poll loops call it after the stale-response guard, so a late reply cannot paint an older phase. No time in phase is shown. A go-around is tagged only while still on the approach or in the flare. When the sim stops sending, the last phase stays, dimmed and tagged.
 
 ## Deviations from the whiteboard
 

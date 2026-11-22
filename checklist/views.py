@@ -17,6 +17,7 @@ from django.views.decorators.http import require_POST
 from checklist.maintenance import run_cleanup_if_due
 from checklist.simbrief import SimBrief
 
+from . import flight_phase
 from .models import (
     Attribute,
     FlightInfo,
@@ -1097,6 +1098,9 @@ def idle_view(request):
         "flight_session": flight_session,
         "keep_screen_on": _keep_screen_on(flight_session),
         "poll_interval_ms": settings.POLL_INTERVAL_MS,
+        # The hub card's stepper; the live phase itself arrives with each poll.
+        "phase_steps": flight_phase.steps(),
+        "phase_groups": flight_phase.step_groups(),
     }
     return TemplateResponse(request, "checklist/idle.html", context)
 

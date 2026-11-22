@@ -2643,3 +2643,169 @@
     padding: 7px 24px;
   }
 }
+
+
+/* ── Flight phase ───────────────────────────────────────────────── */
+/* The phase of flight (stand … on block), drawn from the poll's flight_phase.
+   Not the checklist's phase_state. Two indicators, because .conn-bar re-asserts
+   its layout at 600px and 900px (see .conn-update above): under 900px a row
+   flush below the bar, from 900px a pill inside it. The same JS fills both. */
+
+.phase-row {
+  flex-shrink: 0;
+  display: flex;
+  align-items: baseline;
+  gap: 12px;
+  padding: 7px 14px 8px;
+  background: var(--color-dark);
+  border-bottom: 1px solid rgba(255, 255, 255, 0.05);
+  font-family: var(--font-mono);
+  white-space: nowrap;
+}
+
+.conn-phase {
+  display: none;
+  align-items: center;
+  gap: 8px;
+  margin-right: 20px;
+  padding: 3px 10px;
+  border: 1px solid rgba(34, 201, 160, 0.35);
+  border-radius: 99px;
+  font-family: var(--font-mono);
+  white-space: nowrap;
+}
+
+.conn-phase-name {
+  font-size: 10.5px;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--color-teal-bright);
+}
+
+.conn-phase-tag {
+  font-size: 9.5px;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--color-amber);
+}
+
+@media (min-width: 900px) {
+  .phase-row { display: none; }
+  .conn-phase { display: inline-flex; }
+}
+
+/* In-flight hub card (idle.html) */
+.phase-card {
+  margin: var(--space-4) var(--space-4) 0;
+  padding: 14px 16px 16px;
+  background: var(--color-card);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-lg);
+}
+
+.phase-card-eyebrow {
+  font-family: var(--font-mono);
+  font-size: 9.5px;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  color: var(--color-teal-mid);
+  margin-bottom: 3px;
+}
+
+.phase-card-name {
+  font-size: 20px;
+  font-weight: 600;
+  line-height: 1.15;
+  color: var(--color-ink);
+}
+
+/* Stepper: eleven equal columns, group captions above on wide screens */
+.phase-groups,
+.phase-steps {
+  display: grid;
+  grid-template-columns: repeat(11, minmax(0, 1fr));
+}
+
+.phase-groups { margin-top: 16px; }
+
+.phase-group {
+  display: none;
+  margin: 0 2px;
+  padding: 0 4px 5px;
+  border-bottom: 1px solid var(--color-border);
+  font-family: var(--font-mono);
+  font-size: 9px;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  text-align: center;
+  white-space: nowrap;
+  overflow: hidden;
+  color: var(--color-ink-faint);
+}
+.phase-group--span-1 { grid-column: span 1; }
+.phase-group--span-2 { grid-column: span 2; }
+.phase-group--span-3 { grid-column: span 3; }
+.phase-group--span-4 { grid-column: span 4; }
+
+.phase-steps {
+  margin-top: 14px;
+  list-style: none;
+}
+
+.phase-step {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 7px;
+  min-width: 0;
+  text-align: center;
+}
+
+/* connector to the previous step */
+.phase-step + .phase-step::before {
+  content: "";
+  position: absolute;
+  top: 5px;
+  right: 50%;
+  width: 100%;
+  height: 2px;
+  background: var(--color-border-mid);
+}
+
+.phase-dot {
+  position: relative;
+  z-index: 1;
+  width: 12px;
+  height: 12px;
+  border-radius: 50%;
+  background: var(--color-card);
+  border: 2px solid var(--color-border-mid);
+}
+
+.phase-step-label {
+  display: none;
+  font-size: 10.5px;
+  line-height: 1.2;
+  color: var(--color-ink-muted);
+}
+
+.phase-card-foot {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin-top: 16px;
+  padding-top: 12px;
+  border-top: 1px solid var(--color-border);
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--color-ink-muted);
+}
+.phase-card-foot b { font-weight: 500; color: var(--color-ink-mid); }
+
+/* Eleven labels need about 50px a column: only the desktop layout has the room */
+@media (min-width: 900px) {
+  .phase-group { display: block; }
+  .phase-step-label { display: block; }
+  .phase-card-foot { flex-direction: row; gap: 24px; }
+}

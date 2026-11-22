@@ -450,6 +450,7 @@ class PhaseState:
     pending: dict = field(default_factory=dict)  # rule name -> first tick it was true
     latched: tuple = ()  # self-transitions that fired and must see False before re-arming
     go_arounds: int = 0
+    previous: Optional[Phase] = None  # the phase before this one, for the hub card
 
     def to_dict(self) -> dict:
         return {
@@ -459,6 +460,7 @@ class PhaseState:
             "pending": dict(self.pending),
             "latched": list(self.latched),
             "go_arounds": self.go_arounds,
+            "previous": self.previous.value if self.previous else None,
         }
 
     @classmethod
@@ -478,6 +480,7 @@ class PhaseState:
                 pending=pending,
                 latched=tuple(str(x) for x in (data.get("latched") or ())),
                 go_arounds=int(data.get("go_arounds") or 0),
+                previous=Phase(data["previous"]) if data.get("previous") else None,
             )
         except (ValueError, TypeError, AttributeError):
             return cls()
@@ -579,6 +582,8 @@ def step(
         pending={},
         latched=(fired.name,) if fired.dst == state.phase else (),
         go_arounds=state.go_arounds + (1 if fired.go_around else 0),
+        # A go-around restarts the same phase: what came before it is unchanged.
+        previous=state.previous if fired.dst == state.phase else state.phase,
     )
     return new_state, change
 
@@ -611,6 +616,7 @@ def describe(state: PhaseState) -> Optional[dict]:
             "index": 0,
             "total": total,
             "go_arounds": state.go_arounds,
+            "previous": None,
             "waiting_for": None,
         }
     info = PHASE_INFO[state.phase]
@@ -622,8 +628,36 @@ def describe(state: PhaseState) -> Optional[dict]:
         "index": PHASE_ORDER.index(state.phase) + 1,
         "total": total,
         "go_arounds": state.go_arounds,
+        "previous": PHASE_INFO[state.previous].label if state.previous else None,
         "waiting_for": waiting_for(state.phase),
     }
+
+
+GROUP_CAPTIONS = {GROUND: "Ground", RUNWAY: "Rwy", AIRBORNE: "Airborne"}
+
+
+def steps() -> list[dict]:
+    """The eleven phases in order, for the hub card's stepper."""
+    return [
+        {"key": p.value, "label": PHASE_INFO[p].label, "short": PHASE_INFO[p].short,
+         "group": PHASE_INFO[p].group}
+        for p in PHASE_ORDER
+    ]
+
+
+def step_groups() -> list[dict]:
+    """
+    Runs of consecutive phases in one group, for the captions above the stepper:
+    ground 3, runway 1, airborne 4, runway 1, ground 2.
+    """
+    runs: list[dict] = []
+    for p in PHASE_ORDER:
+        group = PHASE_INFO[p].group
+        if runs and runs[-1]["group"] == group:
+            runs[-1]["span"] += 1
+        else:
+            runs.append({"group": group, "caption": GROUP_CAPTIONS[group], "span": 1})
+    return runs
 
 
 # ── Signal definitions: dataref snapshot → Signals ────────────────────────────

@@ -595,3 +595,61 @@ def test_validate_accepts_the_b738_definitions():
 def test_validate_rejects_bad_definitions(bad, fragment):
     errors = fp.validate_definitions(bad)
     assert errors and any(fragment in e for e in errors)
+
+
+# ── What the screens need ─────────────────────────────────────────────────────
+
+
+def test_previous_phase_follows_the_flight():
+    # replay by hand so the state can be read right after each change
+    current, now, seen = PhaseState(), 1000.0, []
+    base = dict(PARKED)
+    for seconds, overrides in FLIGHT:
+        base.update(overrides)
+        for _ in range(seconds):
+            before = current.phase
+            current, change = step(current, Signals(**base), now)
+            if change:
+                seen.append((before, current.previous, current.phase))
+            now += 1
+    assert seen[0] == (None, None, Phase.STAND)
+    assert all(prev == before for before, prev, _ in seen)
+    assert seen[-1] == (Phase.TAXI_IN, Phase.TAXI_IN, Phase.ON_BLOCK)
+
+
+def test_a_go_around_keeps_the_phase_before_the_approach_as_previous():
+    state, _, _ = run(ON_APPROACH + [(30, dict(thrust_min=0.95, vs_fpm=1500))])
+    assert state.phase is Phase.APPROACH
+    assert state.previous is Phase.DESCENT
+
+
+def test_describe_names_the_previous_phase():
+    state, _, _ = run(FLIGHT[:6])
+    assert fp.describe(state)["previous"] == "Climb"
+    assert fp.describe(PhaseState(last_tick=1))["previous"] is None
+
+
+def test_previous_survives_the_json_round_trip():
+    state, _, _ = run(FLIGHT[:6])
+    assert PhaseState.from_dict(state.to_dict()).previous is Phase.CLIMB
+
+
+def test_a_state_saved_before_previous_existed_still_loads():
+    old = {"phase": "cruise", "since": 5.0, "last_tick": 6.0, "pending": {}, "latched": [], "go_arounds": 0}
+    assert PhaseState.from_dict(old).phase is Phase.CRUISE
+    assert PhaseState.from_dict(old).previous is None
+
+
+def test_steps_for_the_stepper():
+    steps = fp.steps()
+    assert [s["key"] for s in steps] == [p.value for p in fp.PHASE_ORDER]
+    assert steps[1]["label"] == "Pushback & engine start" and steps[1]["short"] == "Pushback"
+
+
+def test_group_captions_span_every_step_exactly_once():
+    groups = fp.step_groups()
+    assert [(g["group"], g["span"]) for g in groups] == [
+        ("ground", 3), ("runway", 1), ("airborne", 4), ("runway", 1), ("ground", 2),
+    ]
+    assert sum(g["span"] for g in groups) == len(fp.PHASE_ORDER)
+    assert [g["caption"] for g in groups] == ["Ground", "Rwy", "Airborne", "Rwy", "Ground"]
