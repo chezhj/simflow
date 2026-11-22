@@ -1,3 +1,9 @@
+## v2.12.0 (2026-11-22)
+
+### Feat
+
+- **flight-phase**: detect and show the phase of flight (#68)
+
 ## v2.11.2 (2026-11-15)
 
 ### Fix
