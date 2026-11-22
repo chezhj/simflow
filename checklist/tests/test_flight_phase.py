@@ -452,9 +452,9 @@ def test_every_transition_names_unique_and_leads_somewhere_real():
 def test_log_line_shape():
     _, changes, _ = run(FLIGHT[:2])
     line = changes[-1].to_log()
-    assert line["type"] == "flight_phase_change"
+    assert line["event"] == "flight_phase_change"
     assert (line["from"], line["to"], line["rule"]) == ("stand", "pushback", "movement")
-    assert set(line) == {"type", "at", "from", "to", "rule", "why", "duration_s", "go_around", "signals"}
+    assert set(line) == {"event", "at", "from", "to", "rule", "why", "duration_s", "go_around", "signals"}
 
 
 # ── Signal definitions ────────────────────────────────────────────────────────

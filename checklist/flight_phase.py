@@ -497,9 +497,12 @@ class Change:
     signals: dict
 
     def to_log(self) -> dict:
-        """The line written to logs/session_<id>.jsonl."""
+        """
+        The line written to logs/session_<id>.jsonl, in the same shape as that
+        file's other entries (``event``), minus ``ts``, which the caller adds.
+        """
         return {
-            "type": "flight_phase_change",
+            "event": "flight_phase_change",
             "at": self.at,
             "from": self.from_phase.value if self.from_phase else None,
             "to": self.to_phase.value,

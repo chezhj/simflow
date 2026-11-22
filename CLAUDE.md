@@ -194,6 +194,17 @@ Two sets track state to avoid conflicts:
 
 Without the two-set split, a sim reconnect after a disconnect would silently fail to navigate because `revealedSlugs.has(slug)` short-circuits the entire block.
 
+### Flight phase (`checklist/flight_phase.py`)
+
+Detects which of 11 phases the aircraft is in (stand … on block). Display only so far; see `design-decisions/20261122-flight-phase-detection.md`.
+
+**Naming:** "phase" elsewhere in this codebase (`phase.py`, `phase_state`, `FlightSession.active_phase`) means *checklist procedure* completion. Flight phase is always `flight_phase`: the module, `FlightSession.flight_phase_state`, and the `flight_phase` key in the poll response. Do not call anything new `phase_state`.
+
+- `step(state, signals, now)` is a pure machine, run from `plugin_state` on the 1 Hz plugin tick (never from the poll). Transitions carry a hold time (debounce). Missing data never fires one.
+- `build_signals(SOP.phase_signals, snapshot)` normalises datarefs to knots and feet. The per-aircraft dataref paths live in the fixture on `SOP.phase_signals`, validated by `validate_definitions` on import; thresholds live in code.
+- State is persisted on `FlightSession.flight_phase_state` (several workers). Every change is logged to `logs/session_<id>.jsonl` as `flight_phase_change`, with the rule and the values behind it.
+- An exception in the machine is logged and swallowed; it must never fail a plugin POST.
+
 ### Export (`checklist/export_view.py`)
 
 `ExportChecklistView` generates xChecklist-format `.txt` output from the DB — legacy feature, not part of the v2.0 redesign.

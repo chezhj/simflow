@@ -7,6 +7,7 @@ from django.conf import settings
 from django.http import JsonResponse
 from django.views.decorators.http import require_GET, require_POST
 
+from . import flight_phase
 from .models import Attribute, CheckItem, FlightItemState, FlightSession, FlightSessionAttribute, IdleDataref, Procedure
 from .phase import PhaseContext, active_attribute_ids, phase_state
 from .rules import collect_datarefs, collect_leaf_evaluations, evaluate_rule
@@ -229,6 +230,12 @@ def poll_view(request):
         "show_live_values": show_live_values,
         "active_warn_ids": active_warn_ids,
         "phase_state": state,
+        # Flight phase of the aircraft. Not phase_state, which is checklist
+        # completion. None until the sim has been seen on an aircraft that has
+        # signal definitions.
+        "flight_phase": flight_phase.describe(
+            flight_phase.PhaseState.from_dict(session.flight_phase_state)
+        ),
     }
 
     if settings.DEBUG and session is not None:
