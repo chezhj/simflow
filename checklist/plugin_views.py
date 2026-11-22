@@ -17,6 +17,7 @@ from django.http import JsonResponse
 from django.views.decorators.csrf import csrf_exempt  # used inside require_api_key
 from django.views.decorators.http import require_GET, require_POST
 
+from . import flight_phase
 from .models import (
     api_key_digest,
     Attribute,
@@ -180,6 +181,42 @@ def _session_log(session_id: int, entry: dict) -> None:
     log_file = _LOG_DIR / f"session_{session_id}.jsonl"
     with open(log_file, "a", encoding="utf-8") as f:
         f.write(json.dumps(entry) + "\n")
+
+
+def _phase_definitions():
+    """
+    Signal definitions of the active SOP ({} when there are none), the same SOP
+    the templates show (see context_processors.sop_context).
+    """
+    return (
+        SOP.objects.order_by("pk").values_list("phase_signals", flat=True).first()
+        or {}
+    )
+
+
+def _advance_flight_phase(session, definitions, datarefs, now):
+    """
+    One tick of the flight phase machine. Returns the state to persist, or None
+    when nothing should be written (no definitions for this aircraft, or the
+    machine failed).
+
+    Never raises: flight phase is informational, and a bug in it must not cost
+    the pilot the auto-checks the same request is about to perform.
+    """
+    if not definitions:
+        return None
+    try:
+        state = flight_phase.PhaseState.from_dict(session.flight_phase_state)
+        signals = flight_phase.build_signals(definitions, datarefs)
+        new_state, change = flight_phase.step(state, signals, now.timestamp())
+        if change is not None:
+            _session_log(
+                session.pk, {"ts": now.isoformat(), **change.to_log()}
+            )
+        return new_state.to_dict()
+    except Exception:  # noqa: BLE001 - see docstring
+        logger.exception("flight phase step failed for session %s", session.pk)
+        return None
 
 
 def require_api_key(view_func):
@@ -446,13 +483,20 @@ def plugin_state(request):
         return JsonResponse({}, status=404)
 
     now = datetime.now(tz=timezone.utc)
+    phase_definitions = _phase_definitions()
+    flight_state = _advance_flight_phase(session, phase_definitions, datarefs, now)
+
     # Persist the snapshot alongside the contact stamp — one UPDATE, and every
-    # worker process then reads the same state (see get_datarefs).
-    FlightSession.objects.filter(pk=session.pk).update(
-        last_plugin_contact=now,
-        last_datarefs=datarefs,
-        plugin_version=request.headers.get("X-Plugin-Version", ""),
-    )
+    # worker process then reads the same state (see get_datarefs). The flight
+    # phase state rides in the same UPDATE, so it costs no extra write.
+    updates = {
+        "last_plugin_contact": now,
+        "last_datarefs": datarefs,
+        "plugin_version": request.headers.get("X-Plugin-Version", ""),
+    }
+    if flight_state is not None:
+        updates["flight_phase_state"] = flight_state
+    FlightSession.objects.filter(pk=session.pk).update(**updates)
     session.last_datarefs = datarefs
 
     newly_checked = []
@@ -611,6 +655,10 @@ def plugin_state(request):
     # Always stream idle-page display datarefs (altitude, IAS, heading, VS).
     for dr in IdleDataref.objects.values_list("dataref_path", flat=True):
         watch.append(dr)
+
+    # Always stream the flight phase signals: the machine runs on every tick,
+    # whatever procedure is open.
+    watch.extend(flight_phase.watched_datarefs(phase_definitions))
 
     # Always stream show_rule datarefs so conditional procedures can unlock
     # at any point during flight, not only when the current gate is clear.

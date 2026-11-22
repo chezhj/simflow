@@ -11,6 +11,7 @@
     <script src="{% static 'checklist/simflow-transition.js' %}"></script>
     <script src="{% static 'checklist/toggle_switches.js' %}"></script>
     <script src="{% static 'checklist/wakelock.js' %}"></script>
+    <script src="{% static 'checklist/flight-phase.js' %}"></script>
 {% endblock head %}
 
 {% block content %}
@@ -74,12 +75,36 @@
         <div class="proc-header">
             <button type="button" class="proc-menu-toggle" id="proc-menu-toggle" aria-label="Show procedures">☰</button>
             <div class="proc-header-left">
-                <div class="proc-phase">In Flight</div>
+                <div class="proc-phase" data-phase-label>In Flight</div>
                 <div class="proc-title">No active procedure</div>
             </div>
         </div>
 
         <div class="checklist-scroll">
+            <section class="phase-card js-hidden" id="phase-card" aria-label="Flight phase">
+                <div class="phase-card-eyebrow" data-phase-eyebrow>Flight phase</div>
+                <div class="phase-card-name" data-phase-name></div>
+
+                <div class="phase-groups" aria-hidden="true">
+                    {% for group in phase_groups %}
+                        <span class="phase-group phase-group--span-{{ group.span }}">{{ group.caption }}</span>
+                    {% endfor %}
+                </div>
+                <ol class="phase-steps">
+                    {% for step in phase_steps %}
+                        <li class="phase-step" data-step data-phase-key="{{ step.key }}" title="{{ step.label }}">
+                            <span class="phase-dot"></span>
+                            <span class="phase-step-label">{{ step.short }}</span>
+                        </li>
+                    {% endfor %}
+                </ol>
+
+                <div class="phase-card-foot js-hidden" data-phase-foot>
+                    <span class="js-hidden" data-phase-previous>Previous · <b data-phase-previous-value></b></span>
+                    <span class="js-hidden" data-phase-next>Next · <b data-phase-next-value></b></span>
+                </div>
+            </section>
+
             <div class="idle-live-values">
                 {% for v in live_values %}
                 <div class="idle-value-card">
@@ -116,7 +141,7 @@
 
         <div class="nav-bar">
             <span>&nbsp;</span>
-            <span class="nav-label">In Flight</span>
+            <span class="nav-label" data-phase-label>In Flight</span>
             <span>&nbsp;</span>
         </div>
 
@@ -286,6 +311,10 @@
             /* Ignore a reply overtaken by a newer one (see detail.html). */
             if (seq <= appliedSeq) return;
             appliedSeq = seq;
+
+            /* Flight phase of the aircraft (not phase_state, which is checklist
+               completion). After the race guard, as in detail.html. */
+            SimFlowPhase.apply(data);
 
             /* Server-clock cursor (see detail.html) — avoids browser clock skew
                dropping a between-polls state update. */

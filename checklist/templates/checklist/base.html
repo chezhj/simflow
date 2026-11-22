@@ -75,6 +75,12 @@
         </div>
         {% endif %}
 
+        <!-- Flight phase pill: desktop only (the row below takes over under 900px) -->
+        <div class="conn-phase js-hidden" data-phase-indicator role="status" aria-label="Flight phase">
+            <span class="conn-phase-name" data-phase-name></span>
+            <span class="conn-phase-tag js-hidden" data-phase-tag></span>
+        </div>
+
         <!-- Actions: avatar/login + info button -->
         <div class="conn-actions">
             {% if user.is_authenticated %}
@@ -85,6 +91,13 @@
             {% endif %}
             <button class="info-btn" id="info-open-btn" aria-label="Open info panel">i</button>
         </div>
+    </div>
+
+    <!-- Flight phase row: phone and tablet. Filled by flight-phase.js from the
+         poll; hidden until the server reports a phase. -->
+    <div class="phase-row js-hidden" data-phase-indicator role="status" aria-label="Flight phase">
+        <span class="conn-phase-name" data-phase-name></span>
+        <span class="conn-phase-tag js-hidden" data-phase-tag></span>
     </div>
 
     <!-- Plugin update notice. Hidden until a poll reports warn/blocked; the

@@ -170,3 +170,40 @@
   border: 1px solid #c2d9c6;
   border-left: 3px solid #111714;
 }
+
+
+/* ── Flight phase states ────────────────────────────────────────── */
+
+.phase-row.is-stale .conn-phase-name,
+.phase-row.is-unknown .conn-phase-name,
+.conn-phase.is-stale .conn-phase-name,
+.conn-phase.is-unknown .conn-phase-name { color: rgba(255, 255, 255, 0.4); }
+
+.phase-row.is-stale .conn-phase-tag,
+.conn-phase.is-stale .conn-phase-tag { color: rgba(255, 255, 255, 0.4); }
+
+.conn-phase.is-stale,
+.conn-phase.is-unknown { border-color: rgba(255, 255, 255, 0.15); }
+
+/* Hub card: done steps and the connectors leading to them in the brand green */
+.phase-step.is-done::before,
+.phase-step.is-current::before { background: var(--color-teal-mid); }
+
+.phase-step.is-done .phase-dot {
+  background: var(--color-teal-mid);
+  border-color: var(--color-teal-mid);
+}
+
+.phase-step.is-current .phase-dot {
+  background: var(--color-teal-bright);
+  border-color: var(--color-teal-bright);
+  box-shadow: 0 0 0 4px rgba(34, 201, 160, 0.22);
+}
+
+.phase-step.is-current .phase-step-label {
+  color: var(--color-ink);
+  font-weight: 600;
+}
+
+/* Last known phase while the sim is not sending */
+.phase-card.is-stale { opacity: 0.6; }

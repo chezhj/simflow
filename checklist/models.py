@@ -9,11 +9,14 @@ import secrets
 
 from colorfield.fields import ColorField
 from django.conf import settings
+from django.core.exceptions import ValidationError
 from django.db import models
 from django.db.models.signals import post_save
 from django.dispatch import receiver
 from django.urls import reverse
 from django.utils import timezone
+
+from .flight_phase import validate_definitions
 
 
 def _generate_session_key():
@@ -62,6 +65,20 @@ class SOP(models.Model):
     content_version = models.CharField(max_length=20, help_text="Semver of the checklist content, e.g. '1.0.0'")
     release_notes = models.TextField(blank=True, help_text="Human-readable summary of what changed in this content version.")
     updated_at = models.DateTimeField(auto_now=True)
+    phase_signals = models.JSONField(
+        default=dict,
+        blank=True,
+        help_text="Where each flight-phase signal comes from for this aircraft: "
+                  "{signal: {dataref, scale} | {datarefs, combine} | {rule}}. "
+                  "Empty turns flight phase detection off. Validated by "
+                  "flight_phase.validate_definitions.",
+    )
+
+    def clean(self):
+        super().clean()
+        errors = validate_definitions(self.phase_signals)
+        if errors:
+            raise ValidationError({"phase_signals": errors})
 
     def __str__(self) -> str:
         return f"{self.icao_code} v{self.content_version}"
@@ -331,6 +348,15 @@ class FlightSession(models.Model):
                   "several worker processes — a plugin POST only reaches one worker, "
                   "so a process-local cache makes every other worker evaluate rules "
                   "against a stale snapshot.",
+    )
+    flight_phase_state = models.JSONField(
+        default=dict,
+        blank=True,
+        help_text="Flight phase machine state (flight_phase.PhaseState.to_dict). "
+                  "Persisted here for the same reason as last_datarefs: several "
+                  "worker processes, so nothing may live in process memory. Not "
+                  "to be confused with active_phase, which is the checklist "
+                  "procedure the pilot is on.",
     )
     require_all_visible = models.BooleanField(
         default=False,

@@ -5,9 +5,68 @@
     "fields": {
       "name": "Boeing 737-800",
       "icao_code": "B738",
-      "content_version": "1.5.6",
-      "release_notes": "- The Online attribute is now called With ATC (internal name ATC, inverse NoATC), and the Online Setup procedure is now Connect to ATC",
-      "updated_at": "2026-11-14T13:56:52.724350Z"
+      "content_version": "1.6.0",
+      "release_notes": "- Flight phase signal definitions for the 737-800. No visible change yet: this prepares the app to follow the phase of flight",
+      "updated_at": "2026-11-22T13:28:44.420449Z",
+      "phase_signals": {
+        "ground_speed_kt": {
+          "dataref": "sim/flightmodel/position/groundspeed",
+          "scale": 1.943844
+        },
+        "ias_kt": {
+          "dataref": "sim/flightmodel/position/indicated_airspeed"
+        },
+        "agl_ft": {
+          "dataref": "sim/flightmodel/position/y_agl",
+          "scale": 3.28084
+        },
+        "radio_alt_ft": {
+          "dataref": "sim/cockpit2/gauges/indicators/radio_altimeter_height_ft_pilot"
+        },
+        "altitude_ft": {
+          "dataref": "sim/cockpit2/gauges/indicators/altitude_ft_pilot"
+        },
+        "vs_fpm": {
+          "dataref": "sim/flightmodel/position/vh_ind_fpm"
+        },
+        "mcp_alt_ft": {
+          "dataref": "laminar/B738/autopilot/mcp_alt_dial"
+        },
+        "cruise_alt_ft": {
+          "dataref": "laminar/B738/autopilot/fmc_cruise_alt"
+        },
+        "parking_brake": {
+          "dataref": "laminar/B738/parking_brake_pos"
+        },
+        "n2_max_pct": {
+          "datarefs": [
+            "laminar/B738/engine/indicators/N2_percent_1",
+            "laminar/B738/engine/indicators/N2_percent_2"
+          ],
+          "combine": "max"
+        },
+        "thrust_min": {
+          "datarefs": [
+            "laminar/B738/engine/thrust1_leveler",
+            "laminar/B738/engine/thrust2_leveler"
+          ],
+          "combine": "min"
+        },
+        "on_runway": {
+          "rule": {
+            "op": "corridor",
+            "ref_lat": "laminar/B738/fms/ref_runway_start_lat",
+            "ref_lon": "laminar/B738/fms/ref_runway_start_lon",
+            "crs": "laminar/B738/fms/ref_runway_crs",
+            "ahead_m": 4000,
+            "behind_m": 150,
+            "half_width_m": 120
+          }
+        },
+        "dist_to_dest_nm": {
+          "dataref": "laminar/B738/fms/dist_to_dest"
+        }
+      }
     }
   },
   {

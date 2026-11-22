@@ -35,6 +35,8 @@ from django.core.management import call_command
 from django.core.management.base import BaseCommand, CommandError
 from django.db import transaction
 
+from checklist.flight_phase import validate_definitions
+
 # The content models, in dependency order for safe loading.
 CONTENT_MODELS = [
     "checklist.sop",
@@ -288,6 +290,17 @@ class Command(BaseCommand):
             slugs[slug] = obj["pk"]
 
         errors.extend(self._reference_errors(data, fixture_pks, prune))
+
+        # A bad signal definition would not fail the load; it would silently
+        # switch flight phase detection off (or point it at nothing) in flight.
+        for obj in data:
+            if obj["model"] == "checklist.sop":
+                errors.extend(
+                    f"checklist.sop pk {obj['pk']}: phase_signals: {problem}"
+                    for problem in validate_definitions(
+                        obj["fields"].get("phase_signals", {})
+                    )
+                )
 
         if not prune:
             # With --prune the holder is retired before the load (see

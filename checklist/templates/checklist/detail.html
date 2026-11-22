@@ -11,6 +11,7 @@
     <script src="{% static 'checklist/simflow-transition.js' %}"></script>
     <script src="{% static 'checklist/toggle_switches.js' %}"></script>
     <script src="{% static 'checklist/wakelock.js' %}"></script>
+    <script src="{% static 'checklist/flight-phase.js' %}"></script>
 {% endblock head %}
 
 {% block content %}
@@ -815,6 +816,11 @@
                stale active_warn_ids, flickering warn rows on and off. */
             if (seq <= appliedSeq) return;
             appliedSeq = seq;
+
+            /* Flight phase of the aircraft (not phase_state, which is checklist
+               completion). After the race guard so a late reply cannot show an
+               older phase. */
+            SimFlowPhase.apply(data);
 
             /* Read the clock from the server's own timestamp: the cursor can't slip
                under browser clock skew and drop a state committed between polls,
