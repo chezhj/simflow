@@ -63,7 +63,7 @@ FLIGHT = [
         ),
     ),
     (30, dict(vs_fpm=-1500, altitude_ft=30000, agl_ft=29000)),  # descent
-    (8, dict(dist_to_dest_nm=15)),  # approach
+    (8, dict(dist_to_dest_nm=8)),  # approach: within the 10 nm fallback
     (4, dict(radio_alt_ft=30, agl_ft=100)),  # flare
     (10, dict(agl_ft=0, radio_alt_ft=0, vs_fpm=0, ground_speed_kt=120, ias_kt=120)),  # roll-out
     (10, dict(ground_speed_kt=20, ias_kt=20)),  # off the runway
@@ -90,7 +90,7 @@ def test_each_change_names_the_rule_that_fired():
         "climbing_through_1000",
         "level_at_cruise",
         "vs_negative",
-        "within_20nm_of_dest",
+        "near_destination",
         "flare",
         "gs_lt_40kt",
         "brake_set_engines_off",
@@ -288,7 +288,7 @@ def test_turbulence_blip_does_not_start_a_descent():
 ON_APPROACH = DEPARTED + [
     (70, AT_CRUISE),
     (30, dict(vs_fpm=-1500, altitude_ft=30000, agl_ft=29000)),
-    (6, dict(dist_to_dest_nm=15)),
+    (6, dict(dist_to_dest_nm=8)),
 ]
 
 
@@ -515,6 +515,11 @@ B738 = {
         }
     },
     "dist_to_dest_nm": {"dataref": "laminar/B738/fms/dist_to_dest"},
+    "active_leg": {"dataref": "laminar/B738/fms/vnav_idx"},
+    "next_leg_is_approach": {
+        "dataref": "laminar/B738/fms/fms_legs_rte_type[laminar/B738/fms/vnav_idx]",
+        "in": [7],
+    },
 }
 
 
@@ -678,3 +683,262 @@ def test_group_captions_span_every_step_exactly_once():
     ]
     assert sum(g["span"] for g in groups) == len(fp.PHASE_ORDER)
     assert [g["caption"] for g in groups] == ["Ground", "Rwy", "Airborne", "Rwy", "Ground"]
+
+
+# ── Approach starts on an approach leg ────────────────────────────────────────
+
+VIDX = "laminar/B738/fms/vnav_idx"
+LEG_TYPE = "laminar/B738/fms/fms_legs_rte_type[{}]"
+DIST = "laminar/B738/fms/dist_to_dest"
+# The type array of the route flown on 2026-11-23, one number per FMS leg, indexed by
+# vnav_idx directly (no shift): 0 route, 1 SID, 2 STAR, 7 approach. The 8 sits between
+# the STAR and the approach; what it means is not known, so it must never count.
+#   idx 10 MODRU, 11 BIFTE, 12 DK426, 13 DK425, 14 DK434 (8), 15 DK454 = the IAF (7), 16 LEGDU (7)
+LEG_TYPES = [0, 1, 1, 1, 1, 1, 0, 0, 0, 0, 2, 2, 2, 2, 8, 7, 7, 7, 7] + [0] * 81
+
+
+def fly_legs(idx_by_second, phase=Phase.DESCENT, extra=None):
+    """
+    Replay a descent through the FMS legs the way the plugin delivers it: every
+    snapshot holds only the array entry that the PREVIOUS snapshot's watch list
+    asked for. Returns ([Change], final state).
+    """
+    full = {LEG_TYPE.format(i): float(t) for i, t in enumerate(LEG_TYPES)}
+    state = PhaseState(phase=phase, since=900.0, last_tick=999.0)
+    asked, changes = set(), []
+    for second, idx in enumerate(idx_by_second):
+        snap = {VIDX: float(idx)}
+        snap.update({k: full[k] for k in asked if k in full})
+        snap.update(extra(second) if callable(extra) else (extra or {}))
+        state, change = step(state, fp.build_signals(B738, snap), 1000.0 + second)
+        if change:
+            changes.append(change)
+        asked = {p for p in fp.watched_datarefs(B738, snap) if p in full}
+    return changes, state
+
+
+def test_approach_starts_when_the_iaf_becomes_the_next_waypoint():
+    # MODRU, BIFTE, DK426, DK425, DK434, then DK454 (the IAF), 5 s on each leg
+    seq = [9] * 5 + [10] * 5 + [11] * 5 + [12] * 5 + [13] * 5 + [14] * 8 + [15] * 8
+    changes, state = fly_legs(seq)
+    assert [c.to_phase for c in changes] == [Phase.APPROACH]
+    assert changes[0].rule == "approach_leg"
+    assert state.phase is Phase.APPROACH
+    assert changes[0].why == "the next waypoint is on the approach (leg 15) for 3 s"
+    assert changes[0].signals["active_leg"] == 15
+    assert changes[0].signals["next_leg_is_approach"] is True
+
+
+def test_the_watch_list_lag_costs_exactly_one_tick():
+    # idx 15 from second 33. Second 33 has no entry for it yet (unknown), second 34 has
+    # it and the 3 s hold starts, so the change lands at second 37.
+    seq = [14] * 33 + [15] * 8
+    changes, _ = fly_legs(seq)
+    assert changes[0].at == 1000.0 + 37
+
+
+def test_star_legs_and_the_unexplained_type_8_do_not_start_the_approach():
+    for idx in (10, 11, 12, 13, 14):          # types 2 2 2 2 8
+        changes, state = fly_legs([idx] * 40)
+        assert changes == [] and state.phase is Phase.DESCENT, idx
+
+
+def test_route_legs_and_sid_legs_do_not_start_the_approach():
+    for idx in (0, 1, 3, 6, 9):               # types 0 1 1 0 0
+        changes, _ = fly_legs([idx] * 30)
+        assert changes == [], idx
+
+
+def test_a_direct_to_that_jumps_onto_the_approach_is_followed_after_one_unknown_tick():
+    changes, _ = fly_legs([9] * 5 + [15] * 10)
+    assert changes[0].at == 1000.0 + 9        # jump at 5, unknown at 5, true from 6, held 3 s
+
+
+def test_an_index_that_flickers_between_the_iaf_and_the_leg_before_never_fires():
+    changes, _ = fly_legs([15] * 3 + [14] * 3 + [15] * 3)
+    assert changes == []
+
+
+def test_the_approach_leg_only_counts_in_descent():
+    for phase in (Phase.CLIMB, Phase.CRUISE, Phase.TAKEOFF):
+        changes, state = fly_legs([15] * 20, phase=phase)
+        assert changes == [] and state.phase is phase, phase
+
+
+def test_beyond_the_array_or_with_no_index_nothing_fires():
+    changes, _ = fly_legs([200] * 20)
+    assert changes == []
+    state = PhaseState(phase=Phase.DESCENT, since=0, last_tick=1)
+    for t in range(2, 30):
+        state, change = step(state, fp.build_signals(B738, {}), float(t))
+        assert change is None
+
+
+def test_a_go_around_after_a_leg_triggered_approach_is_counted():
+    up = {"laminar/B738/engine/thrust1_leveler": 0.95, "laminar/B738/engine/thrust2_leveler": 0.95,
+          "sim/flightmodel/position/vh_ind_fpm": 1500}
+    changes, state = fly_legs([15] * 30, extra=lambda s: up if s >= 10 else {})
+    assert [c.rule for c in changes] == ["approach_leg", "go_around"]
+    assert state.phase is Phase.APPROACH and state.go_arounds == 1
+    assert state.previous is Phase.DESCENT
+
+
+# ── The distance fallback, now 10 nm ──────────────────────────────────────────
+
+
+def test_the_fallback_waits_for_10_nm():
+    changes, _ = fly_legs([9] * 30, extra={DIST: 12})
+    assert changes == []
+    changes, state = fly_legs([9] * 10, extra={DIST: 9})
+    assert changes[0].rule == "near_destination" and state.phase is Phase.APPROACH
+    assert changes[0].why == "9 nm from destination <= 10 nm for 3 s"
+
+
+def test_zero_distance_still_means_not_loaded():
+    changes, _ = fly_legs([9] * 30, extra={DIST: 0})
+    assert changes == []
+
+
+def test_whichever_holds_first_wins_when_both_are_true():
+    # near the destination on the IAF: the distance has been true from the first tick,
+    # the leg only from the second (one tick of lag), so the distance fires first
+    changes, _ = fly_legs([15] * 10, extra={DIST: 8})
+    assert [c.rule for c in changes] == ["near_destination"]
+    # far from the destination, on the IAF: the leg decides
+    changes, _ = fly_legs([15] * 10, extra={DIST: 40})
+    assert [c.rule for c in changes] == ["approach_leg"]
+
+
+def test_descent_waits_for_either_and_says_so():
+    d = fp.describe(PhaseState(phase=Phase.DESCENT, last_tick=1))
+    assert d["waiting_for"] == (
+        "Approach · the next waypoint is on the approach or within 10 nm of the destination"
+    )
+
+
+def test_phases_with_a_single_way_forward_read_as_before():
+    assert fp.waiting_for(Phase.CRUISE) == "Descent · V/S below -300 fpm"
+    assert fp.waiting_for(Phase.STAND).startswith("Pushback & engine start · movement above 2 kt")
+    assert fp.waiting_for(Phase.ON_BLOCK) is None
+
+
+# ── Reading an array entry whose index is another dataref ────────────────────
+
+LEG = "laminar/B738/fms/fms_legs_rte_type[{}]"
+
+
+def _is_approach(snapshot):
+    return fp.build_signals(B738, snapshot).next_leg_is_approach
+
+
+def test_the_entry_for_the_current_index_is_used():
+    assert _is_approach({VIDX: 15, LEG.format(15): 7}) is True
+    assert _is_approach({VIDX: 15, LEG.format(15): 7.0}) is True      # the plugin sends floats
+    assert _is_approach({VIDX: 15.0, LEG.format(15): 7}) is True      # so may the index
+    assert _is_approach({VIDX: 14, LEG.format(14): 8}) is False
+    assert _is_approach({VIDX: 12, LEG.format(12): 2}) is False
+
+
+def test_an_entry_for_a_different_index_is_never_used():
+    """The lag case: the snapshot holds the old index's entry, so the answer is unknown."""
+    assert _is_approach({VIDX: 15, LEG.format(14): 7}) is None
+    assert _is_approach({VIDX: 14, LEG.format(15): 7}) is None
+
+
+@pytest.mark.parametrize(
+    "snapshot",
+    [
+        {},                                           # nothing yet
+        {LEG.format(15): 7},                          # no index
+        {VIDX: None, LEG.format(15): 7},
+        {VIDX: "15", LEG.format(15): 7},              # not a number
+        {VIDX: True, LEG.format(1): 7},               # a bool is not an index
+        {VIDX: -1, LEG.format(-1): 7},                # negative
+        {VIDX: 15.5, LEG.format(15): 7},              # not a whole number
+        {VIDX: float("nan"), LEG.format(15): 7},
+        {VIDX: float("inf"), LEG.format(15): 7},
+        {VIDX: 15, LEG.format(15): "7"},              # entry is text
+        {VIDX: 15, LEG.format(15): None},
+        {VIDX: 15, LEG.format(15): True},
+    ],
+)
+def test_anything_unreadable_is_unknown_not_false(snapshot):
+    assert _is_approach(snapshot) is None
+
+
+def test_in_matches_any_of_several_numbers():
+    defs = {"next_leg_is_approach": {"dataref": "a/b[a/idx]", "in": [7, 8]}}
+    sig = lambda v: fp.build_signals(defs, {"a/idx": 3, "a/b[3]": v}).next_leg_is_approach
+    assert (sig(7), sig(8), sig(2)) == (True, True, False)
+
+
+def test_a_plain_fixed_index_still_works_and_is_not_dynamic():
+    defs = {"vs_fpm": {"dataref": "a/arr[3]"}}
+    assert fp.build_signals(defs, {"a/arr[3]": 42.0}).vs_fpm == 42.0
+    assert fp._split_dynamic("a/arr[3]") is None
+    assert fp._split_dynamic("a/arr[a/idx]") == ("a/arr", "a/idx")
+    assert fp._split_dynamic("a/plain") is None
+
+
+def test_a_dynamic_index_works_for_a_number_signal_too():
+    defs = {"vs_fpm": {"dataref": "a/arr[a/idx]", "scale": 2}}
+    assert fp.build_signals(defs, {"a/idx": 1, "a/arr[1]": 10}).vs_fpm == 20
+
+
+def test_the_watch_list_asks_for_the_index_and_the_one_entry_it_points_at():
+    paths = fp.watched_datarefs(B738, {VIDX: 15})
+    assert VIDX in paths and LEG.format(15) in paths
+    assert not [p for p in paths if "fms_legs_rte_type[" in p and p != LEG.format(15)]
+    paths = fp.watched_datarefs(B738, {VIDX: 16.0})
+    assert LEG.format(16) in paths and LEG.format(15) not in paths
+
+
+def test_before_the_first_snapshot_only_the_index_is_watched():
+    for snapshot in (None, {}, {VIDX: "x"}, {VIDX: -3}):
+        paths = fp.watched_datarefs(B738, snapshot)
+        assert VIDX in paths
+        assert not [p for p in paths if "fms_legs_rte_type[" in p]
+
+
+def test_the_index_dataref_is_listed_once_though_two_signals_read_it():
+    paths = fp.watched_datarefs(B738, {VIDX: 15})
+    assert paths.count(VIDX) == 1 and len(paths) == len(set(paths))
+
+
+# ── Validating the new shapes ─────────────────────────────────────────────────
+
+GOOD_LEG = {"dataref": "laminar/B738/fms/fms_legs_rte_type[laminar/B738/fms/vnav_idx]", "in": [7]}
+
+
+def test_the_new_definition_validates():
+    assert fp.validate_definitions({"next_leg_is_approach": GOOD_LEG}) == []
+    assert fp.validate_definitions({"active_leg": {"dataref": VIDX}}) == []
+
+
+@pytest.mark.parametrize(
+    "bad, fragment",
+    [
+        ({"next_leg_is_approach": {"dataref": "a/b[a/c]"}}, "must be a rule, or a single dataref with `in`"),
+        ({"next_leg_is_approach": {**GOOD_LEG, "in": []}}, "non-empty list of numbers"),
+        ({"next_leg_is_approach": {**GOOD_LEG, "in": ["7"]}}, "non-empty list of numbers"),
+        ({"next_leg_is_approach": {**GOOD_LEG, "in": [True]}}, "non-empty list of numbers"),
+        ({"next_leg_is_approach": {**GOOD_LEG, "in": 7}}, "non-empty list of numbers"),
+        ({"vs_fpm": {"dataref": "a/b", "in": [1]}}, "makes a true/false signal"),
+        ({"on_runway": {"rule": {"dataref": "x", "op": "gt", "value": 1}, "in": [1]}}, "does not go with a rule"),
+        ({"vs_fpm": {"dataref": "a/b[a/c"}}, "malformed [index]"),
+        ({"vs_fpm": {"dataref": "a/b[]"}}, "malformed [index]"),
+        ({"vs_fpm": {"dataref": "a/b[c]"}}, "number or a dataref path between"),
+        ({"vs_fpm": {"dataref": "a/b[a/c] "}}, "whitespace"),
+        ({"vs_fpm": {"dataref": " a/b"}}, "whitespace"),
+        ({"vs_fpm": {"dataref": 5}}, "not a dataref path"),
+        ({"vs_fpm": {"dataref": ""}}, "not a dataref path"),
+    ],
+)
+def test_validate_rejects_bad_new_definitions(bad, fragment):
+    errors = fp.validate_definitions(bad)
+    assert errors and any(fragment in e for e in errors), errors
+
+
+def test_a_fixed_index_and_the_older_shapes_still_validate():
+    assert fp.validate_definitions({"vs_fpm": {"dataref": "a/arr[3]"}}) == []
+    assert fp.validate_definitions({"on_runway": {"rule": {"dataref": "x", "op": "gt", "value": 1}}}) == []

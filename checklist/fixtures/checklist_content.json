@@ -5,9 +5,9 @@
     "fields": {
       "name": "Boeing 737-800",
       "icao_code": "B738",
-      "content_version": "1.6.0",
-      "release_notes": "- Flight phase signal definitions for the 737-800. No visible change yet: this prepares the app to follow the phase of flight",
-      "updated_at": "2026-11-22T13:28:44.420449Z",
+      "content_version": "1.6.1",
+      "release_notes": "- Flight phase: Approach also starts when the next waypoint is on the approach, and the distance fallback is now 10 nm",
+      "updated_at": "2026-11-24T20:45:02.903479Z",
       "phase_signals": {
         "ground_speed_kt": {
           "dataref": "sim/flightmodel/position/groundspeed",
@@ -65,6 +65,15 @@
         },
         "dist_to_dest_nm": {
           "dataref": "laminar/B738/fms/dist_to_dest"
+        },
+        "active_leg": {
+          "dataref": "laminar/B738/fms/vnav_idx"
+        },
+        "next_leg_is_approach": {
+          "dataref": "laminar/B738/fms/fms_legs_rte_type[laminar/B738/fms/vnav_idx]",
+          "in": [
+            7
+          ]
         }
       }
     }
