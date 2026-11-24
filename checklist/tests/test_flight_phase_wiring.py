@@ -58,10 +58,15 @@ def snapshot(**sig):
     """
     v = dict(
         gs_kt=0, ias=0, agl_m=1, radio=0, alt=0, vs=0, mcp=0, cruise=0,
-        brake=1, n2=0, thrust=0, dist=250,
+        brake=1, n2=0, thrust=0, dist=250, idx=None, legs=None,
     )
     v.update(sig)
-    return {
+    extra = {}
+    if v["idx"] is not None:  # the FMS next-waypoint index, and the type entries sent
+        extra["laminar/B738/fms/vnav_idx"] = v["idx"]
+    for i, leg_type in (v["legs"] or {}).items():
+        extra[f"laminar/B738/fms/fms_legs_rte_type[{i}]"] = leg_type
+    return {**extra,
         "sim/flightmodel/position/groundspeed": v["gs_kt"] / flight_phase.MS_TO_KT,
         "sim/flightmodel/position/indicated_airspeed": v["ias"],
         "sim/flightmodel/position/y_agl": v["agl_m"],
@@ -180,6 +185,70 @@ class TestPluginTickRunsTheMachine(_Base):
     def test_the_watch_list_has_no_duplicates(self):
         watch = self.tick(0).json()["watch"]
         self.assertEqual(len(watch), len(set(watch)))
+
+
+class TestApproachLegOnTheTick(_Base):
+    """The next waypoint's leg type, read through a watch list that follows the index."""
+
+    LEG_TYPE = "laminar/B738/fms/fms_legs_rte_type[{}]"
+    VIDX = "laminar/B738/fms/vnav_idx"
+
+    def descend(self):
+        """The aircraft is in Descent, last heard from just before the first tick."""
+        state = flight_phase.PhaseState(
+            phase=flight_phase.Phase.DESCENT,
+            since=T0.timestamp() - 600,
+            last_tick=T0.timestamp() - 1,
+        )
+        FlightSession.objects.filter(pk=self.session.pk).update(flight_phase_state=state.to_dict())
+
+    def test_the_watch_list_follows_the_active_leg(self):
+        watch = self.tick(0, idx=15).json()["watch"]
+        self.assertIn(self.VIDX, watch)
+        self.assertIn(self.LEG_TYPE.format(15), watch)
+        self.assertNotIn(self.LEG_TYPE.format(14), watch)
+        watch = self.tick(1, idx=16).json()["watch"]
+        self.assertIn(self.LEG_TYPE.format(16), watch)
+        self.assertNotIn(self.LEG_TYPE.format(15), watch)
+
+    def test_before_the_index_is_known_only_the_index_is_watched(self):
+        watch = self.tick(0).json()["watch"]  # no idx in this snapshot
+        self.assertIn(self.VIDX, watch)
+        self.assertEqual([p for p in watch if "fms_legs_rte_type[" in p], [])
+
+    def test_an_approach_leg_starts_the_approach_and_the_log_says_why(self):
+        self.descend()
+        for second in range(4):
+            self.tick(second, idx=15, legs={15: 7.0}, dist=40, agl_m=3000)
+        self.assertEqual(self.state().phase, flight_phase.Phase.APPROACH)
+        entry = self.phase_log()[-1]
+        self.assertEqual((entry["from"], entry["to"], entry["rule"]), ("descent", "approach", "approach_leg"))
+        self.assertIn("leg 15", entry["why"])
+        self.assertEqual(entry["signals"]["active_leg"], 15)
+        self.assertTrue(entry["signals"]["next_leg_is_approach"])
+
+    def test_the_entry_of_the_previous_index_does_not_count(self):
+        """The tick right after the index moves still carries the old entry."""
+        self.descend()
+        for second in range(10):
+            self.tick(second, idx=15, legs={14: 7.0}, dist=40, agl_m=3000)
+        self.assertEqual(self.state().phase, flight_phase.Phase.DESCENT)
+
+    def test_a_star_leg_or_type_8_does_not_start_it(self):
+        self.descend()
+        for second, (idx, leg_type) in enumerate([(13, 2.0)] * 5 + [(14, 8.0)] * 6):
+            self.tick(second, idx=idx, legs={idx: leg_type}, dist=40, agl_m=3000)
+        self.assertEqual(self.state().phase, flight_phase.Phase.DESCENT)
+
+    def test_the_distance_fallback_is_10_nm(self):
+        self.descend()
+        for second in range(5):
+            self.tick(second, idx=9, legs={9: 0.0}, dist=12, agl_m=3000)
+        self.assertEqual(self.state().phase, flight_phase.Phase.DESCENT)
+        for second in range(5, 10):
+            self.tick(second, idx=9, legs={9: 0.0}, dist=9, agl_m=3000)
+        self.assertEqual(self.state().phase, flight_phase.Phase.APPROACH)
+        self.assertEqual(self.phase_log()[-1]["rule"], "near_destination")
 
 
 class TestAircraftWithoutDefinitions(_Base):
@@ -317,6 +386,15 @@ class TestContentImportValidatesSignals(TestCase):
         with self.assertRaisesMessage(CommandError, "exactly one of"):
             self._import(lambda f: f["phase_signals"].update(ias_kt={}))
 
+    def test_a_bad_leg_definition_is_refused(self):
+        bad = {"dataref": "a/b[a/c]", "in": []}
+        with self.assertRaisesMessage(CommandError, "non-empty list of numbers"):
+            self._import(lambda f: f["phase_signals"].update(next_leg_is_approach=bad))
+
+    def test_a_malformed_index_is_refused(self):
+        with self.assertRaisesMessage(CommandError, "malformed [index]"):
+            self._import(lambda f: f["phase_signals"].update(vs_fpm={"dataref": "a/b[a/c"}))
+
     def test_a_fixture_without_the_field_still_imports(self):
         """An older fixture (before this field existed) means 'detection off', not an error."""
         self._import(lambda f: f.pop("phase_signals"))
@@ -349,6 +427,24 @@ class TestShippedSignalDefinitions(SimpleTestCase):
         self.assertAlmostEqual(gs["scale"], flight_phase.MS_TO_KT, places=5)  # m/s
         self.assertEqual(agl["dataref"], "sim/flightmodel/position/y_agl")
         self.assertAlmostEqual(agl["scale"], flight_phase.M_TO_FT, places=5)  # metres
+
+    def test_the_approach_leg_reads_the_type_at_the_next_waypoint_index_directly(self):
+        """
+        Verified in flight on 2026-11-23: vnav_idx is the index of the next waypoint
+        and indexes the type array with no shift. DK454, the IAF, was idx 15 and the
+        first type 7. Type 8 (idx 14) and the STAR's 2 must not count.
+        """
+        leg = B738_SIGNALS["next_leg_is_approach"]
+        self.assertEqual(
+            leg["dataref"],
+            "laminar/B738/fms/fms_legs_rte_type[laminar/B738/fms/vnav_idx]",
+        )
+        self.assertEqual(leg["in"], [7])
+        self.assertEqual(B738_SIGNALS["active_leg"], {"dataref": "laminar/B738/fms/vnav_idx"})
+
+    def test_no_length_or_limit_is_needed_for_the_array(self):
+        self.assertNotIn("length", B738_SIGNALS["next_leg_is_approach"])
+        self.assertNotIn("limit", B738_SIGNALS["next_leg_is_approach"])
 
     def test_the_runway_corridor_matches_the_before_takeoff_rule(self):
         before_takeoff = next(

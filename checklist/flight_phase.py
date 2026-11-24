@@ -28,6 +28,7 @@ everything below sees knots and feet.
 from __future__ import annotations
 
 import dataclasses
+import re
 from dataclasses import dataclass, field
 from enum import Enum
 from typing import Callable, Optional
@@ -100,7 +101,7 @@ LEVEL_VS_FPM = 300.0  # |V/S| below this is level
 LEVEL_ALT_TOLERANCE_FT = 100.0
 STEP_CLIMB_FPM = 500.0
 DESCENT_FPM = -300.0
-APPROACH_NM = 20.0
+APPROACH_NM = 10.0  # the fallback when no approach leg tells us earlier
 FLARE_RADIO_ALT_FT = 50.0
 # A radio altimeter can read 0 (or garbage) outside its range. y_agl is always
 # valid, so a flare also needs the aircraft to be low by that measure.
@@ -135,10 +136,14 @@ class Signals:
     thrust_min: Optional[float] = None  # the lower of the two levers, 0..1
     on_runway: Optional[bool] = None
     dist_to_dest_nm: Optional[float] = None
+    # True when the leg the FMC is flying towards is an approach leg. Which leg
+    # types count is aircraft data, so it is defined in the fixture.
+    next_leg_is_approach: Optional[bool] = None
+    active_leg: Optional[float] = None  # index of the next waypoint; logged, not decided on
 
 
 SIGNAL_NAMES = tuple(f.name for f in dataclasses.fields(Signals))
-BOOL_SIGNALS = frozenset({"on_runway"})
+BOOL_SIGNALS = frozenset({"on_runway", "next_leg_is_approach"})
 
 
 def _gt(v, x):
@@ -373,9 +378,22 @@ TRANSITIONS: tuple[Transition, ...] = (
         forward=False,
     ),
     Transition(
+        # The next waypoint is on the approach: the aircraft is flying the approach
+        # procedure. Fires when the IAF becomes the next waypoint, a little before
+        # it is reached. Which FMC leg types count as "approach" is aircraft data and
+        # lives in the fixture (next_leg_is_approach), not here.
+        "approach_leg",
+        _src(Phase.DESCENT),
+        Phase.APPROACH,
+        lambda s: bool(s.next_leg_is_approach),
+        3,
+        lambda s: f"the next waypoint is on the approach (leg {_n(s.active_leg, '', 0)})",
+        "the next waypoint is on the approach",
+    ),
+    Transition(
         # 0 is excluded: an FMC with no route loaded may read 0, and a real
         # distance never is until after touchdown.
-        "within_20nm_of_dest",
+        "near_destination",
         _src(Phase.DESCENT),
         Phase.APPROACH,
         lambda s: s.dist_to_dest_nm is not None and 0 < s.dist_to_dest_nm <= APPROACH_NM,
@@ -597,10 +615,15 @@ def step(
 
 def waiting_for(phase: Optional[Phase]) -> Optional[str]:
     """What the next phase is waiting for, from the same table the machine runs."""
+    dst, waiting = None, []
     for t in TRANSITIONS:
         if t.forward and phase in t.src and t.waiting and t.dst is not phase:
-            return f"{PHASE_INFO[t.dst].label} · {t.waiting}"
-    return None
+            dst = dst or t.dst
+            if t.dst is dst:
+                waiting.append(t.waiting)
+    if not waiting:
+        return None
+    return f"{PHASE_INFO[dst].label} · {' or '.join(waiting)}"
 
 
 def describe(state: PhaseState) -> Optional[dict]:
@@ -676,11 +699,48 @@ def step_groups() -> list[dict]:
 # ``scale`` is optional and defaults to 1.
 
 
+# A path may take its array index from another dataref: "array[other/dataref]".
+# The plugin can only read fixed positions ("array[15]"), so the server resolves it
+# in two steps. The entry for the index in THIS snapshot is looked up by its fixed
+# name, so a stale value is never used for the wrong index; and the watch list asks
+# the plugin for the entry of the index in the latest snapshot, which arrives with
+# the next tick (see watched_datarefs).
+_DYNAMIC_PATH = re.compile(r"^([^\[\]]+)\[([^\[\]]+)\]$")
+
+
+def _split_dynamic(path):
+    """('array', 'index/dataref') for "array[index/dataref]"; None for any other path."""
+    match = _DYNAMIC_PATH.match(path) if isinstance(path, str) else None
+    if match and not match.group(2).isdigit():
+        return match.group(1), match.group(2)
+    return None
+
+
+def _index_of(snapshot, index_path):
+    """The whole number a dataref holds, for use as an array index; else None."""
+    raw = snapshot.get(index_path)
+    if isinstance(raw, bool) or not isinstance(raw, (int, float)):
+        return None
+    if not float(raw).is_integer() or raw < 0:
+        return None
+    return int(raw)
+
+
+def _resolve(path, snapshot):
+    """The snapshot key a path means, or None when its index is not known yet."""
+    dynamic = _split_dynamic(path)
+    if dynamic is None:
+        return path
+    index = _index_of(snapshot, dynamic[1])
+    return None if index is None else f"{dynamic[0]}[{index}]"
+
+
 def _value(defn: dict, snapshot: dict) -> Optional[float]:
     paths = [defn["dataref"]] if "dataref" in defn else list(defn["datarefs"])
     values = []
     for path in paths:
-        raw = snapshot.get(path)
+        key = _resolve(path, snapshot)
+        raw = snapshot.get(key) if key is not None else None
         if isinstance(raw, bool) or not isinstance(raw, (int, float)):
             return None  # one missing input makes a combined signal unknown
         values.append(raw)
@@ -705,26 +765,59 @@ def build_signals(definitions: dict, snapshot: dict) -> Signals:
             if "rule" in defn:
                 out[name] = bool(evaluate_rule(defn["rule"], snapshot))
             else:
-                out[name] = _value(defn, snapshot)
+                value = _value(defn, snapshot)
+                if "in" in defn:  # a true/false signal: is the value one of these
+                    value = None if value is None else value in defn["in"]
+                out[name] = value
         except (KeyError, TypeError, ValueError):
             out[name] = None
     return Signals(**out)
 
 
-def watched_datarefs(definitions: dict) -> list[str]:
-    """Every dataref path the definitions read, for the plugin's watch list."""
+def watched_datarefs(definitions: dict, snapshot: Optional[dict] = None) -> list[str]:
+    """
+    Every dataref path the definitions read, for the plugin's watch list.
+
+    For a path like "array[index/dataref]" the watch list holds the index dataref
+    itself and, once the latest ``snapshot`` shows what the index is, the one array
+    entry for that index. The plugin then sends that entry with the next tick. When
+    the index changes, the tick right after has the old entry, the signal is unknown
+    for that one tick, and the entry for the new index follows.
+    """
     seen: list[str] = []
     for defn in (definitions or {}).values():
         if not isinstance(defn, dict):
             continue
         if "rule" in defn:
             paths = collect_datarefs(defn["rule"])
-        elif "dataref" in defn:
-            paths = [defn["dataref"]]
         else:
-            paths = list(defn.get("datarefs", ()))
+            paths = []
+            for path in [defn["dataref"]] if "dataref" in defn else list(defn.get("datarefs", ())):
+                dynamic = _split_dynamic(path)
+                if dynamic is None:
+                    paths.append(path)
+                    continue
+                paths.append(dynamic[1])
+                key = _resolve(path, snapshot or {})
+                if key is not None:
+                    paths.append(key)
         seen.extend(p for p in paths if p not in seen)
     return seen
+
+
+def _path_problem(path) -> Optional[str]:
+    """What is wrong with a dataref path in a definition, or None."""
+    if not isinstance(path, str) or not path:
+        return "is not a dataref path"
+    if path != path.strip() or " " in path:
+        return "has whitespace in it"
+    if "[" in path or "]" in path:
+        match = _DYNAMIC_PATH.match(path)
+        if not match:
+            return "has a malformed [index]"
+        if not match.group(2).isdigit() and "/" not in match.group(2):
+            return "needs a number or a dataref path between [ ]"
+    return None
 
 
 def validate_definitions(definitions) -> list[str]:
@@ -746,10 +839,27 @@ def validate_definitions(definitions) -> list[str]:
         if len(shapes) != 1:
             errors.append(f"{name}: needs exactly one of dataref, datarefs or rule")
             continue
-        if "rule" in defn and name not in BOOL_SIGNALS:
-            errors.append(f"{name}: a rule gives true/false, which only {sorted(BOOL_SIGNALS)} accept")
-        if "rule" not in defn and name in BOOL_SIGNALS:
-            errors.append(f"{name}: must be a rule")
+        has_in = "in" in defn
+        if "rule" in defn:
+            if name not in BOOL_SIGNALS:
+                errors.append(f"{name}: a rule gives true/false, which only {sorted(BOOL_SIGNALS)} accept")
+            if has_in:
+                errors.append(f"{name}: `in` does not go with a rule")
+        elif name in BOOL_SIGNALS:
+            if "dataref" not in defn or not has_in:
+                errors.append(f"{name}: must be a rule, or a single dataref with `in`")
+        elif has_in:
+            errors.append(f"{name}: `in` makes a true/false signal; only {sorted(BOOL_SIGNALS)} take it")
+        if has_in:
+            allowed = defn["in"]
+            if not isinstance(allowed, list) or not allowed or any(
+                isinstance(v, bool) or not isinstance(v, (int, float)) for v in allowed
+            ):
+                errors.append(f"{name}: `in` must be a non-empty list of numbers")
+        for path in ([defn["dataref"]] if "dataref" in defn else list(defn.get("datarefs") or ())):
+            problem = _path_problem(path)
+            if problem:
+                errors.append(f"{name}: {path!r} {problem}")
         if "datarefs" in defn:
             if not defn["datarefs"] or defn.get("combine") not in ("max", "min"):
                 errors.append(f"{name}: datarefs needs a non-empty list and combine of max or min")

@@ -658,7 +658,7 @@ def plugin_state(request):
 
     # Always stream the flight phase signals: the machine runs on every tick,
     # whatever procedure is open.
-    watch.extend(flight_phase.watched_datarefs(phase_definitions))
+    watch.extend(flight_phase.watched_datarefs(phase_definitions, datarefs))
 
     # Always stream show_rule datarefs so conditional procedures can unlock
     # at any point during flight, not only when the current gate is clear.
