@@ -1,3 +1,9 @@
+## v2.13.0 (2026-11-24)
+
+### Feat
+
+- **flight-phase**: start approach on an approach leg (#69)
+
 ## v2.12.0 (2026-11-22)
 
 ### Feat
