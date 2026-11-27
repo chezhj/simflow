@@ -271,6 +271,62 @@ class TestLandingSpeedBrakesArmed(SimpleTestCase):
         self.assertFalse(evaluate_rule(rule, {self.SPEEDBRAKE: 0}))
 
 
+def _procedure(pk):
+    return next(
+        o["fields"] for o in CONTENT
+        if o["model"] == "checklist.procedure" and o["pk"] == pk
+    )
+
+
+class TestDescentProcedureRule(SimpleTestCase):
+    """The Descent Procedure opens once, at the first top of descent.
+
+    The one-shot guard is the flightphase_cruise gate. The autobrake used to be a
+    second guard, but it hid the procedure whenever the crew armed the autobrake
+    before top of descent, so it must not come back."""
+
+    CRUISE = "laminar/b738/fmodpack/flightphase_cruise"
+    TD_DIST = "laminar/B738/fms/vnav_td_dist"
+    AGL = "sim/flightmodel/position/y_agl"
+    LANDED = "laminar/b738/fmodpack/flightphase_landed"
+    AUTOBRAKE = "laminar/B738/autobrake/autobrake_pos"
+
+    def setUp(self):
+        self.rule = _procedure(11)["show_rule"]
+        # Cruise snapshot 42 nm from TOD.
+        self.cruise = {
+            self.CRUISE: 1, self.TD_DIST: 42, self.AGL: 11000, self.LANDED: 0,
+        }
+
+    def test_fires_in_cruise_before_tod(self):
+        self.assertTrue(evaluate_rule(self.rule, self.cruise))
+
+    def test_fires_whatever_the_autobrake_selector_says(self):
+        # 0 RTO, 1 OFF, 2-5 armed (1 / 2 / 3 / MAX).
+        for pos in (0, 1, 2, 3, 4, 5):
+            with self.subTest(autobrake_pos=pos):
+                state = {**self.cruise, self.AUTOBRAKE: pos}
+                self.assertTrue(evaluate_rule(self.rule, state))
+
+    def test_does_not_read_the_autobrake(self):
+        found = []
+        _paths(self.rule, found)
+        self.assertNotIn(self.AUTOBRAKE, found)
+
+    def test_out_of_cruise_does_not_fire(self):
+        # Stepped descent: the phase has left cruise.
+        state = {**self.cruise, self.CRUISE: 0}
+        self.assertFalse(evaluate_rule(self.rule, state))
+
+    def test_tod_too_far_does_not_fire(self):
+        state = {**self.cruise, self.TD_DIST: 75}
+        self.assertFalse(evaluate_rule(self.rule, state))
+
+    def test_landed_does_not_fire(self):
+        state = {**self.cruise, self.LANDED: 1}
+        self.assertFalse(evaluate_rule(self.rule, state))
+
+
 class TestProcedureCategories(SimpleTestCase):
     """The fixture carries category explicitly: loaddata resets a missing field to
     its default, which would undo the picker grouping (and the idle page's idea of

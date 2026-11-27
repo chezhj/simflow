@@ -1,6 +1,6 @@
 # Descent Procedure False Retrigger Fix
 
-> **Status: IMPLEMENTED (2026-07-26).** `show_rule` for pk=11 updated in
+> **Status: IMPLEMENTED (2026-07-26); autobrake leaf removed 2026-11-27, see the addendum.** `show_rule` for pk=11 updated in
 > `checklist/fixtures/checklist_content.json` and imported via
 > `manage.py checklist_content import`. DB verified. Remaining: confirm on a
 > test flight that the checklist still fires once at the first TOD (activation
@@ -113,6 +113,16 @@ appear. Verify it still fires once at the first TOD.
 ---
 
 ## Addendum (2026-09-15): the autobrake guard
+
+> **Superseded (2026-11-27): the autobrake leaf was removed (content 1.6.2).**
+> On a real flight the crew had armed the autobrake before top of descent, the
+> leaf evaluated false, and the procedure never appeared. That is the trade-off
+> described under "Consequence to be aware of" below, and arming early is common
+> enough that it outweighed the guard. The `flightphase_cruise` gate is the only
+> one-shot guard again; `TestDescentProcedureRule` pins that the rule no longer
+> reads `autobrake_pos`. If the procedure is seen to reopen, add a per-procedure
+> "already shown this flight" latch in the poll instead of reinstating this leaf.
+> The rest of this addendum is kept as history.
 
 ### What it is
 

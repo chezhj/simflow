@@ -5,9 +5,9 @@
     "fields": {
       "name": "Boeing 737-800",
       "icao_code": "B738",
-      "content_version": "1.6.1",
-      "release_notes": "- Flight phase: Approach also starts when the next waypoint is on the approach, and the distance fallback is now 10 nm",
-      "updated_at": "2026-11-24T20:45:02.903479Z",
+      "content_version": "1.6.2",
+      "release_notes": "- Descent Procedure: no longer hidden when the autobrake is armed before top of descent",
+      "updated_at": "2026-11-27T20:31:52.869869Z",
       "phase_signals": {
         "ground_speed_kt": {
           "dataref": "sim/flightmodel/position/groundspeed",
@@ -275,11 +275,6 @@
             "dataref": "laminar/b738/fmodpack/flightphase_landed",
             "op": "eq",
             "value": 0
-          },
-          {
-            "dataref": "laminar/B738/autobrake/autobrake_pos",
-            "op": "lt",
-            "value": 2
           }
         ]
       },
