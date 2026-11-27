@@ -14,6 +14,7 @@ from pathlib import Path
 from django.test import SimpleTestCase
 
 from checklist.rules import evaluate_rule
+from checklist.tests.test_rules import _corridor_state
 
 FIXTURE = Path(__file__).resolve().parent.parent / "fixtures" / "checklist_content.json"
 CONTENT = json.loads(FIXTURE.read_text(encoding="utf-8"))
@@ -325,6 +326,40 @@ class TestDescentProcedureRule(SimpleTestCase):
     def test_landed_does_not_fire(self):
         state = {**self.cruise, self.LANDED: 1}
         self.assertFalse(evaluate_rule(self.rule, state))
+
+
+class TestBeforeTakeoffRule(SimpleTestCase):
+    """Before Takeoff opens at hold short or while lining up, slowly and on the
+    ground. The numbers are content decisions (docs/CORRIDOR_OPERATOR_SPEC.md
+    section 4.1); these pin what ships."""
+
+    AGL = "sim/flightmodel/position/y_agl"
+    GS = "sim/flightmodel/position/groundspeed"
+
+    def setUp(self):
+        self.rule = _procedure(5)["show_rule"]
+
+    def _state(self, along_m, cross_m=0, gs=0.0, agl=0.0):
+        # _corridor_state takes north/east and the course is 087 magnetic, true 090,
+        # so the runway runs east: east is along, north is across.
+        return _corridor_state(cross_m, along_m, **{self.GS: gs, self.AGL: agl})
+
+    def test_fires_lined_up_and_stopped(self):
+        self.assertTrue(evaluate_rule(self.rule, self._state(500)))
+
+    def test_opens_300_m_before_the_runway_start(self):
+        self.assertTrue(evaluate_rule(self.rule, self._state(-280)))
+        self.assertFalse(evaluate_rule(self.rule, self._state(-320)))
+
+    def test_speed_limit_is_7_m_s(self):
+        self.assertTrue(evaluate_rule(self.rule, self._state(500, gs=6.9)))
+        self.assertFalse(evaluate_rule(self.rule, self._state(500, gs=7.1)))
+
+    def test_does_not_refire_in_the_air(self):
+        self.assertFalse(evaluate_rule(self.rule, self._state(500, agl=30)))
+
+    def test_parallel_taxiway_stays_outside(self):
+        self.assertFalse(evaluate_rule(self.rule, self._state(500, cross_m=180)))
 
 
 class TestProcedureCategories(SimpleTestCase):

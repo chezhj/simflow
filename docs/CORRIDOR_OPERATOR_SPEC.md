@@ -140,9 +140,9 @@ manually, which is the same degradation `near` already has.
 {"all": [
   {"op": "corridor", "ref_lat": "…ref_runway_start_lat",
    "ref_lon": "…ref_runway_start_lon", "crs": "…ref_runway_crs",
-   "ahead_m": 4000, "behind_m": 150, "half_width_m": 120},
+   "ahead_m": 4000, "behind_m": 300, "half_width_m": 120},
   {"dataref": "sim/flightmodel/position/y_agl", "op": "lt", "value": 5},
-  {"dataref": "sim/flightmodel/position/groundspeed", "op": "lt", "value": 5}
+  {"dataref": "sim/flightmodel/position/groundspeed", "op": "lt", "value": 7}
 ]}
 ```
 
@@ -153,11 +153,17 @@ as Before Taxi finished (session 129). The rectangle over the runway is the
 only position test now.
 
 The `y_agl` guard stops the corridor re-firing as the aircraft flies down the
-runway on rotation. The `groundspeed` guard (m/s, so 5 is about 10 kt) means
+runway on rotation. The `groundspeed` guard (m/s, so 7 is about 14 kt) means
 the procedure only opens once the aircraft has slowed to line up or hold, not
 while it taxis through the corridor or across the runway.
 
 ### 4.1 Tuning the numbers
+
+Content 1.6.3 gave the rule more slack: `behind_m` 150 to 300 and the groundspeed
+limit 5 to 7 m/s, so it opens a little sooner and at a slightly faster turn onto
+the runway. The flight-phase `on_runway` signal carries the same corridor (a test
+keeps them equal); it also needs takeoff-level airspeed, so phase detection is
+not affected in practice.
 
 `half_width_m` was 90 until content 1.5.1. Position is the aircraft reference
 point, not the nose, so with the nose on a 90 m hold-short line the reference
@@ -172,7 +178,7 @@ These are content decisions, not code decisions:
 | Value | Chosen | Trade-off |
 |---|---|---|
 | `ahead_m` 4000 | Covers the longest runways end to end | Too long is harmless — the runway ends first |
-| `behind_m` 150 | Holding short of the threshold still counts | Too long reaches back into the taxiway system |
+| `behind_m` 300 (150 until content 1.6.3) | Holding short of the threshold still counts, with room for a hold-short line set well back | Too long reaches back into the taxiway system |
 | `half_width_m` 120 | Reaches the hold-short line with the aircraft reference point set back from the nose (content 1.5.1) | Parallel taxiways are typically 150–190 m out; 120 leaves 30 m or more to the nearest, but going further starts to catch them |
 
 ---

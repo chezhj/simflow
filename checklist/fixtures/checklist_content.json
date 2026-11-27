@@ -5,9 +5,9 @@
     "fields": {
       "name": "Boeing 737-800",
       "icao_code": "B738",
-      "content_version": "1.6.2",
-      "release_notes": "- Descent Procedure: no longer hidden when the autobrake is armed before top of descent",
-      "updated_at": "2026-11-27T20:31:52.869869Z",
+      "content_version": "1.6.3",
+      "release_notes": "- Before Takeoff opens a little sooner: the runway corridor reaches 300 m before the runway start (was 150 m) and the groundspeed limit is 7 m/s, about 14 kt (was 5 m/s, about 10 kt)",
+      "updated_at": "2026-11-27T20:36:50.088004Z",
       "phase_signals": {
         "ground_speed_kt": {
           "dataref": "sim/flightmodel/position/groundspeed",
@@ -59,7 +59,7 @@
             "ref_lon": "laminar/B738/fms/ref_runway_start_lon",
             "crs": "laminar/B738/fms/ref_runway_crs",
             "ahead_m": 4000,
-            "behind_m": 150,
+            "behind_m": 300,
             "half_width_m": 120
           }
         },
@@ -151,7 +151,7 @@
             "ref_lon": "laminar/B738/fms/ref_runway_start_lon",
             "crs": "laminar/B738/fms/ref_runway_crs",
             "ahead_m": 4000,
-            "behind_m": 150,
+            "behind_m": 300,
             "half_width_m": 120
           },
           {
@@ -162,7 +162,7 @@
           {
             "dataref": "sim/flightmodel/position/groundspeed",
             "op": "lt",
-            "value": 5
+            "value": 7
           }
         ]
       },
